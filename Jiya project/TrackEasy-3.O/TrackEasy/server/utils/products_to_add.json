@@ -1,0 +1,58 @@
+[
+    {
+      "name": "Apple",
+      "cost": 50,
+      "brand": "Apple",
+      "category": "Fruits",
+      "image": "/images/apple.jpg",
+      "vendor": "6932cfe0fd72ef0280e9f371"
+    },
+    {
+      "name": "Banana",
+      "cost": 20,
+      "brand": "Banana",
+      "category": "Fruits",
+      "image": "/images/banana.jpg",
+      "vendor": "6932cfe0fd72ef0280e9f371"
+    },
+    {
+      "name": "Mango",
+      "cost": 70,
+      "brand": "Mango",
+      "category": "Fruits",
+      "image": "/images/mango.jpg",
+      "vendor": "6932cfe0fd72ef0280e9f371"
+    },
+    {
+      "name": "iPhone",
+      "cost": 50000,
+      "brand": "Apple",
+      "category": "Electronics",
+      "image": "/images/iphone.jpg",
+      "vendor": "6932cfe0fd72ef0280e9f371"
+    },
+    {
+      "name": "Samsung TV",
+      "cost": 40000,
+      "brand": "Samsung",
+      "category": "Electronics",
+      "image": "/images/tv.jpg",
+      "vendor": "6932cfe0fd72ef0280e9f371"
+    },
+    {
+      "name": "T-Shirt",
+      "cost": 500,
+      "brand": "Nike",
+      "category": "Clothing",
+      "image": "/images/tshirt.jpg",
+      "vendor": "6932cfe0fd72ef0280e9f371"
+    },
+    {
+      "name": "Smart Watch",
+      "cost": 5000,
+      "brand": "Apple",
+      "category": "Electronics",
+      "image": "images\\watch.jpg",
+      "vendor": "6932d255efee513a3e6973bf"
+    }
+  ]

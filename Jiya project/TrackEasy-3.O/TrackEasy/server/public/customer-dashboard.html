@@ -1,0 +1,424 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>TrackEasy Customer Dashboard</title>
+  <link rel="stylesheet" href="/trackeasy-pro-v3.css">
+  <link rel="stylesheet" href="/styles/shop.css?v=1.2">
+  <link rel="stylesheet" href="/styles/premium-ui.css">
+  <style>
+    .hidden { display: none; }
+    body { overflow-y: auto; }
+  </style>
+  <link rel="icon" type="image/png" href="/logo.png">
+</head>
+
+<body>
+  <aside class="sidebar" style="background-color: var(--color-primary); color: black;">
+    <div class="sidebar-logo">
+      <img src="/logo.png" alt="Logo" style="height: 32px; width: 32px;">
+      <span class="trackeasy-gradient-text">TrackEasy</span>
+    </div>
+    <nav class="sidebar-nav">
+      <ul>
+        <li><a href="#" id="nav-dashboard" class="active">Dashboard</a></li>
+        <li><a href="#" id="nav-shop">Shop</a></li>
+        <li><a href="#" id="nav-orders">My Orders</a></li>
+        <li><a href="#" id="nav-account">Account</a></li>
+      </ul>
+    </nav>
+    <div class="sidebar-theme-toggle">
+      <div style="display: flex; align-items: center; justify-content: space-between;">
+        <span style="font-size: 0.85rem; opacity: 0.8;">Theme</span>
+        <label class="theme-switch">
+          <input type="checkbox" id="theme-toggle">
+          <span class="slider"></span>
+        </label>
+      </div>
+    </div>
+    <button id="logout-btn" class="btn btn-secondary sidebar-logout">Logout</button>
+  </aside>
+  <div class="content-wrapper" style="margin-left: 240px; padding: 20px;">
+    <header class="topnav" style="display: flex; flex-direction: column; align-items: center; justify-content: center; margin-bottom: 20px; background: white; padding: 20px; border-radius: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.05);">
+      <img src="/logo.png" alt="Logo" style="height: 60px; width: 60px; margin-bottom: 10px;">
+      <h2 id="page-title" style="margin: 0;">Customer Dashboard</h2>
+    </header>
+    <main class="dashboard-main">
+      <!-- DASHBOARD VIEW -->
+      <div id="view-dashboard">
+        <section class="order-timeline-section" id="order-timeline-section">
+          <!-- Order timeline will render here via JS -->
+        </section>
+        <section class="tracking-section" id="tracking-section">
+          <!-- Real-time status tracking rendered by JS -->
+        </section>
+        <section class="notifications-section" id="notifications-section">
+          <!-- Notifications/alerts placeholder -->
+        </section>
+        <section class="charts-section">
+          <div class="chart-placeholder" id="chart-delivery-trend"></div>
+        </section>
+      </div>
+
+      <!-- SHOP VIEW -->
+      <div id="view-shop" class="hidden">
+        <div class="shop-section">
+          <div class="categories" id="shop-categories">
+            <button class="category active" onclick="filterProducts('all')">All</button>
+            <button class="category" onclick="filterProducts('Fruits')">Fruits</button>
+            <button class="category" onclick="filterProducts('Electronics')">Electronics</button>
+            <button class="category" onclick="filterProducts('Clothing')">Clothing</button>
+          </div>
+          <div class="product-list" id="product-list">
+            <!-- Products rendered here -->
+          </div>
+
+          <div class="cart-section" style="background: white; color: black; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); margin-top: 2rem;">
+            <h3>Your Cart</h3>
+            <table class="cart-table" style="width: 100%; border-collapse: collapse; margin-bottom: 1rem;">
+              <thead>
+                <tr style="border-bottom: 2px solid #eee; text-align: left;">
+                  <th style="padding: 10px;">Image</th>
+                  <th style="padding: 10px;">Name</th>
+                  <th style="padding: 10px;">Price</th>
+                  <th style="padding: 10px;">Qty</th>
+                  <th style="padding: 10px;">Total</th>
+                  <th style="padding: 10px;">Action</th>
+                </tr>
+              </thead>
+              <tbody id="cart-items">
+                <tr>
+                  <td colspan="6" style="padding: 10px; text-align: center;">Cart is empty</td>
+                </tr>
+              </tbody>
+            </table>
+            <div style="text-align: right;">
+              <h3>Total: ₹<span id="cart-total">0</span></h3>
+              <button onclick="placeOrder()" style="padding: 10px 20px; background: #3b82f6; border: none; border-radius: 6px; color: white; font-weight: bold; cursor: pointer; box-shadow: 0 2px 4px rgba(0,0,0,0.2); font-size: 1rem;">Place Order</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- CHECKOUT VIEW -->
+      <div id="view-checkout" class="hidden">
+        <div class="checkout-container"
+          style="max-width: 800px; margin: 0 auto; background: white; padding: 2rem; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
+
+          <h2 style="margin-bottom: 2rem; color: #1f2937; border-bottom: 2px solid #f3f4f6; padding-bottom: 1rem;">
+            Secure Checkout</h2>
+
+          <!-- Order Summary -->
+          <div class="order-summary"
+            style="margin-bottom: 2rem; background: #f9fafb; padding: 1.5rem; border-radius: 8px;">
+            <h3 style="margin-bottom: 1rem; color: #374151;">Order Summary</h3>
+            <div style="display: flex; justify-content: space-between; font-size: 1.1rem; font-weight: bold;">
+              <span>Total Amount:</span>
+              <span>₹<span id="checkout-total">0</span></span>
+            </div>
+          </div>
+
+          <!-- Payment Methods -->
+          <div class="payment-methods" style="color: black;">
+            <h3 style="margin-bottom: 1.5rem; color: #374151;">Select Payment Method</h3>
+
+            <!-- COD -->
+            <label class="payment-option"
+              style="display: block; margin-bottom: 1rem; padding: 1rem; border: 2px solid #e5e7eb; border-radius: 8px; cursor: pointer; transition: all 0.2s;">
+              <div style="display: flex; align-items: center; gap: 1rem;">
+                <input type="radio" name="paymentOption" value="COD" checked onchange="togglePaymentForms()">
+                <div>
+                  <strong style="display: block;">Cash on Delivery (COD)</strong>
+                  <small style="color: #666;">Pay with cash upon delivery</small>
+                </div>
+              </div>
+            </label>
+
+            <!-- Card -->
+            <label class="payment-option"
+              style="display: block; margin-bottom: 1rem; padding: 1rem; border: 2px solid #e5e7eb; border-radius: 8px; cursor: pointer; transition: all 0.2s;">
+              <div style="display: flex; align-items: center; gap: 1rem;">
+                <input type="radio" name="paymentOption" value="Card" onchange="togglePaymentForms()">
+                <div>
+                  <strong style="display: block;">Debit / Credit Card</strong>
+                  <small style="color: #666;">Secure payment via card</small>
+                </div>
+              </div>
+            </label>
+
+            <!-- Card Details Form -->
+            <div id="card-form" class="payment-details hidden"
+              style="margin-left: 2.5rem; margin-bottom: 1.5rem; padding: 1rem; border-left: 3px solid var(--color-primary); background: #f8f9fa;">
+              <div class="form-group" style="margin-bottom: 1rem;">
+                <label style="display: block; margin-bottom: 0.5rem; color: #4b5563;">Card Number</label>
+                <input type="text" placeholder="0000 0000 0000 0000" maxlength="19" class="input-field"
+                  style="width: 100%; padding: 0.75rem; border: 1px solid #d1d5db; border-radius: 6px;">
+              </div>
+              <div class="form-group" style="margin-bottom: 1rem;">
+                <label style="display: block; margin-bottom: 0.5rem; color: #4b5563;">Card Holder Name</label>
+                <input type="text" placeholder="John Doe" class="input-field"
+                  style="width: 100%; padding: 0.75rem; border: 1px solid #d1d5db; border-radius: 6px;">
+              </div>
+              <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
+                <div class="form-group">
+                  <label style="display: block; margin-bottom: 0.5rem; color: #4b5563;">Expiry Date</label>
+                  <input type="text" placeholder="MM/YY" maxlength="5" class="input-field"
+                    style="width: 100%; padding: 0.75rem; border: 1px solid #d1d5db; border-radius: 6px;">
+                </div>
+                <div class="form-group">
+                  <label style="display: block; margin-bottom: 0.5rem; color: #4b5563;">CVV</label>
+                  <input type="password" placeholder="123" maxlength="3" class="input-field"
+                    style="width: 100%; padding: 0.75rem; border: 1px solid #d1d5db; border-radius: 6px;">
+                </div>
+              </div>
+            </div>
+
+            <!-- UPI -->
+            <label class="payment-option"
+              style="display: block; margin-bottom: 1rem; padding: 1rem; border: 2px solid #e5e7eb; border-radius: 8px; cursor: pointer; transition: all 0.2s;">
+              <div style="display: flex; align-items: center; gap: 1rem;">
+                <input type="radio" name="paymentOption" value="UPI" onchange="togglePaymentForms()">
+                <div>
+                  <strong style="display: block;">UPI</strong>
+                  <small style="color: #666;">Pay via UPI ID (Google Pay, PhonePe, Paytm)</small>
+                </div>
+              </div>
+            </label>
+
+            <!-- UPI Form -->
+            <div id="upi-form" class="payment-details hidden"
+              style="margin-left: 2.5rem; margin-bottom: 1.5rem; padding: 1.2rem; border-left: 4px solid var(--color-primary); background: #f9fafb; border-radius: 0 12px 12px 0;">
+              
+              <!-- Phantom Honeypot Area -->
+              <div style="opacity: 0; position: absolute; top: -1000px; left: -1000px; height: 0; width: 0; overflow: hidden; pointer-events: none;">
+                <input type="text" id="order-confirm-bypass" name="order-confirm-bypass" tabindex="-1" autocomplete="off">
+              </div>
+
+              <div class="form-group" style="margin-bottom: 1rem;">
+                <label style="display: block; margin-bottom: 0.5rem; color: #4b5563; font-weight: 600;">Select UPI App</label>
+                <select id="upi-provider" class="input-field"
+                  style="width: 100%; padding: 0.75rem; border: 1.5px solid #d1d5db; border-radius: 8px; background: white; cursor: pointer;">
+                  <option value="" disabled selected>Choose your app...</option>
+                  <option value="Paytm">Paytm</option>
+                  <option value="Google Pay">Google Pay (GPay)</option>
+                  <option value="PhonePe">PhonePe</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label style="display: block; margin-bottom: 0.5rem; color: #4b5563; font-weight: 600;">Enter UPI ID</label>
+                <input type="text" id="upi-id-input" placeholder="username@upi" class="input-field"
+                  style="width: 100%; padding: 0.75rem; border: 1.5px solid #d1d5db; border-radius: 8px;">
+              </div>
+            </div>
+
+          </div>
+
+          <div style="margin-top: 2rem; display: flex; gap: 1rem; justify-content: flex-end;">
+            <button onclick="switchView('shop')"
+              style="padding: 1rem 2rem; border: 1px solid #d1d5db; background: white; color: #374151; border-radius: 8px; cursor: pointer; font-weight: bold;">Cancel</button>
+            <button onclick="handlePayment()" class="btn-primary"
+              style="padding: 1rem 3rem; color: white; border: none; border-radius: 8px; cursor: pointer; font-weight: bold; font-size: 1.1rem; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">Make
+              Payment</button>
+          </div>
+
+        </div>
+      </div>
+
+      <!-- MY ORDERS VIEW -->
+      <div id="view-orders" class="hidden">
+        <div class="orders-list" id="my-orders-list">
+          <!-- Orders rendered here -->
+        </div>
+      </div>
+
+      <!-- ACCOUNT VIEW -->
+      <div id="view-account" class="hidden">
+        <div class="account-details"
+          style="background: white !important; color: #333 !important; padding: 2rem; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); max-width: 600px;">
+          <h3 style="margin-bottom: 1.5rem; border-bottom: 2px solid #f0f0f0; padding-bottom: 0.5rem;">My Account</h3>
+          <div style="display: grid; gap: 1rem;">
+            <div style="display: grid; grid-template-columns: 120px 1fr; align-items: center;">
+              <strong style="color: #666;">Name:</strong>
+              <span id="account-name" style="font-size: 1.1rem;">-</span>
+            </div>
+            <div style="display: grid; grid-template-columns: 120px 1fr; align-items: center;">
+              <strong style="color: #666;">Email:</strong>
+              <span id="account-email" style="font-size: 1.1rem;">-</span>
+            </div>
+            <div style="display: grid; grid-template-columns: 120px 1fr; align-items: center;">
+              <strong style="color: #666;">Role:</strong>
+              <span id="account-role"
+                style="text-transform: capitalize; background: #e5e7eb; padding: 0.25rem 0.75rem; border-radius: 999px; width: fit-content;">-</span>
+            </div>
+
+          </div>
+
+          <!-- Update Profile Section -->
+          <div class="profile-update-section" style="margin-top: 2rem; padding-top: 2rem; border-top: 1px solid #eee;">
+            <h4 style="margin-bottom: 1rem; color: #374151;">Update Profile Details</h4>
+            <div style="display: grid; gap: 1rem; max-width: 400px;">
+              <div class="form-group">
+                <label for="account-phone" style="display: block; margin-bottom: 0.5rem; color: #666;">Phone Number (10 digits)</label>
+                <input type="text" id="account-phone" placeholder="e.g. 9876543210" maxlength="10"
+                  style="width: 100%; padding: 0.75rem; border: 1px solid #ddd; border-radius: 4px;">
+              </div>
+              <div class="form-group">
+                <label for="account-address" style="display: block; margin-bottom: 0.5rem; color: #666;">Shipping Address</label>
+                <textarea id="account-address" placeholder="Enter full address" rows="3"
+                  style="width: 100%; padding: 0.75rem; border: 1px solid #ddd; border-radius: 4px; resize: vertical;"></textarea>
+              </div>
+              <button onclick="updateProfile()" class="btn-primary"
+                style="padding: 0.75rem 1.5rem; background: var(--color-primary); color: black; border: none; border-radius: 4px; cursor: pointer; font-weight: bold;">Save Profile</button>
+            </div>
+          </div>
+
+          <!-- Passkey Management Section -->
+          <div class="passkey-section" style="margin-top: 2rem; padding-top: 2rem; border-top: 1px solid #eee;">
+            <h4 style="margin-bottom: 1rem; color: #374151;">Device Passkey (Secure Verification)</h4>
+            <div style="display: flex; align-items: center; justify-content: space-between; background: #f0fdf4; padding: 1rem; border-radius: 8px; border: 1px solid #bbf7d0;">
+              <div>
+                <p id="passkey-status" style="margin-bottom: 0.25rem; font-weight: 600; color: #166534;">No Passkey Registered</p>
+                <small style="color: #15803d;">Use biometrics (FaceID/TouchID) for future order verification.</small>
+              </div>
+              <button onclick="registerPasskey()" id="reg-passkey-btn" class="btn-primary" 
+                style="padding: 0.5rem 1rem; background: #22c55e; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: bold;">
+                Register
+              </button>
+            </div>
+          </div>
+
+          <!-- Change Password Section -->
+          <div class="password-change-section" style="margin-top: 2rem; padding-top: 2rem; border-top: 1px solid #eee;">
+            <button id="toggle-password-btn"
+              style="padding: 0.75rem 1.5rem; background: #f3f4f6; color: #1f2937; border: 1px solid #ddd; border-radius: 4px; cursor: pointer; width: 100%; text-align: left; font-weight: bold; display: flex; justify-content: space-between; align-items: center;">
+              Change Password
+              <span>▼</span>
+            </button>
+            <div id="password-form-container" class="hidden"
+              style="margin-top: 1rem; padding: 1rem; background: #f9fafb; border-radius: 4px;">
+              <form id="change-password-form" style="max-width: 400px;">
+                <div class="form-group" style="margin-bottom: 1rem;">
+                  <label for="old-password" style="display: block; margin-bottom: 0.5rem; color: #666;">Old
+                    Password</label>
+                  <div class="password-wrapper">
+                    <input type="password" id="old-password" required
+                      style="width: 100%; padding: 0.75rem; padding-right: 45px; border: 1px solid #ddd; border-radius: 4px;">
+                    <button type="button" class="toggle-password" onclick="togglePasswordVisibility('old-password')">
+                      <svg id="old-password-eye-closed" class="eye-icon" xmlns="http://www.w3.org/2000/svg" fill="none"
+                        viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                          d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21" />
+                      </svg>
+                      <svg id="old-password-eye-open" class="eye-icon hidden" xmlns="http://www.w3.org/2000/svg"
+                        fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                          d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                          d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                      </svg>
+                    </button>
+                  </div>
+                </div>
+                <div class="form-group" style="margin-bottom: 1rem;">
+                  <label for="new-password" style="display: block; margin-bottom: 0.5rem; color: #666;">New
+                    Password</label>
+                  <div class="password-wrapper">
+                    <input type="password" id="new-password" required minlength="6"
+                      style="width: 100%; padding: 0.75rem; padding-right: 45px; border: 1px solid #ddd; border-radius: 4px;">
+                    <button type="button" class="toggle-password" onclick="togglePasswordVisibility('new-password')">
+                      <svg id="new-password-eye-closed" class="eye-icon" xmlns="http://www.w3.org/2000/svg" fill="none"
+                        viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                          d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21" />
+                      </svg>
+                      <svg id="new-password-eye-open" class="eye-icon hidden" xmlns="http://www.w3.org/2000/svg"
+                        fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                          d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                          d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                      </svg>
+                    </button>
+                  </div>
+                </div>
+                <button type="submit" class="btn-primary"
+                  style="padding: 0.75rem 1.5rem; background: var(--color-primary); color: black; border: none; border-radius: 4px; cursor: pointer;">Update
+                  Password</button>
+              </form>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </main>
+  </div>
+
+  <!-- Feedback Modal -->
+  <div id="feedback-modal" class="modal hidden">
+    <div class="modal-content">
+      <span class="close-modal">&times;</span>
+      <h2>Rate Your Order</h2>
+      <form id="feedback-form">
+        <input type="hidden" id="feedback-order-id">
+        <div class="form-group">
+          <label>Rating:</label>
+          <div class="star-rating">
+            <input type="radio" id="star5" name="rating" value="5" /><label for="star5" title="Very Good">★</label>
+            <input type="radio" id="star4" name="rating" value="4" /><label for="star4" title="Good">★</label>
+            <input type="radio" id="star3" name="rating" value="3" /><label for="star3" title="Average">★</label>
+            <input type="radio" id="star2" name="rating" value="2" /><label for="star2" title="Bad">★</label>
+            <input type="radio" id="star1" name="rating" value="1" /><label for="star1" title="Very Bad">★</label>
+          </div>
+          <p id="rating-label"
+            style="text-align: center; margin-top: 5px; font-weight: bold; color: var(--color-primary); min-height: 24px;">
+          </p>
+        </div>
+        <div class="form-group">
+          <label for="feedback-comment">Comment (10-200 characters):</label>
+          <textarea id="feedback-comment" rows="4" placeholder="Tell us about your experience..." minlength="10"
+            maxlength="200" style="width: 100%; padding: 10px; border-radius: 8px; border: 1px solid #ddd;"></textarea>
+          <div style="text-align: right; font-size: 0.8rem; color: #666;">
+            <span id="char-count">0</span>/200
+          </div>
+        </div>
+        <button type="submit" class="btn-primary">Submit Feedback</button>
+      </form>
+    </div>
+  </div>
+
+  <!-- OTP Modal -->
+  <div id="otp-modal" class="modal hidden" style="display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.5); align-items: center; justify-content: center; z-index: 1000;">
+    <div class="modal-content" style="max-width: 400px; text-align: center; background: white; padding: 2rem; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
+      <h2 style="margin-bottom: 1rem;">Verification Required</h2>
+      <p style="margin-bottom: 1.5rem; color: #666;" id="otp-modal-message">Please enter the 6-digit OTP sent to your registered mobile number.</p>
+      <form id="otp-form" style="display: flex; flex-direction: column; gap: 1rem;">
+        <input type="text" id="otp-input" placeholder="123456" maxlength="6" pattern="\d{6}" required
+          style="padding: 1rem; font-size: 1.5rem; letter-spacing: 5px; text-align: center; border: 2px solid #e5e7eb; border-radius: 8px;">
+        <button type="submit" class="btn-primary" style="padding: 1rem; font-size: 1.1rem; border-radius: 8px; background: #eab308; color: black; border: none; cursor: pointer;">Verify & Place Order</button>
+      </form>
+
+      <!-- Alternative Verification Options (Initially Hidden) -->
+      <div id="alt-verification" class="hidden" style="margin-top: 1.5rem; padding-top: 1.5rem; border-top: 1px solid #eee;">
+        <p style="margin-bottom: 1rem; font-weight: bold; color: #ef4444;">Too many failed attempts? Try another way:</p>
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+          <button onclick="verifyWithFingerprint()" style="padding: 0.75rem; background: #3b82f6; color: white; border: none; border-radius: 8px; cursor: pointer; font-weight: 600; display: flex; align-items: center; justify-content: center; gap: 5px;">
+            <span>👆</span> Fingerprint
+          </button>
+          <button onclick="verifyWithPasskey()" style="padding: 0.75rem; background: #10b981; color: white; border: none; border-radius: 8px; cursor: pointer; font-weight: 600; display: flex; align-items: center; justify-content: center; gap: 5px;">
+            <span>🔑</span> Passkey
+          </button>
+        </div>
+      </div>
+      <button onclick="closeOtpModal()" style="margin-top: 1rem; background: none; border: none; color: #6b7280; cursor: pointer; text-decoration: underline;">Cancel</button>
+    </div>
+  </div>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="/scripts/dashboardCommon.js"></script>
+  <script src="/scripts/biometrics.js"></script>
+  <script type="module" src="/scripts/customerDashboard.js"></script>
+</body>
+
+</html>

@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>TrackEasy Vendor Dashboard</title>
+  <link rel="stylesheet" href="/styles.css">
+  <link rel="stylesheet" href="/styles/vendor.css">
+  <style>
+    .sidebar {
+      width: 220px;
+      position: fixed;
+      left: 0;
+      top: 0;
+      bottom: 0;
+      background: #1f2937;
+      color: #fff;
+      padding: 1rem
+    }
+
+    .content-wrapper {
+      margin-left: 240px;
+      padding: 1rem
+    }
+
+    body {
+      overflow-y: auto;
+    }
+  </style>
+  <link rel="icon" type="image/png" href="/logo.png">
+</head>
+
+<body>
+  <aside class="sidebar">
+    <div class="sidebar-logo" style="display: flex; align-items: center; justify-content: center; gap: 10px;">
+      <img src="/logo.png" alt="Logo" style="height: 32px; width: 32px;">
+      <span class="trackeasy-gradient-text">TrackEasy</span>
+    </div>
+    <nav class="sidebar-nav">
+      <ul>
+        <li><a href="#" id="nav-dashboard" class="active">Dashboard</a></li>
+        <li><a href="#" id="nav-products">My Products</a></li>
+        <li><a href="#" id="nav-performance">Performance</a></li>
+        <li><a href="#" id="nav-feedback">Feedback</a></li>
+        <li><a href="#" id="nav-account">Account</a></li>
+      </ul>
+    </nav>
+    <button id="logout-btn" class="btn btn-secondary sidebar-logout">Logout</button>
+  </aside>
+  <div class="content-wrapper">
+    <header class="topnav" style="display: flex; flex-direction: column; align-items: center; gap: 10px;">
+      <img src="/logo.png" alt="Logo" style="height: 150px; width: 150px;">
+      <h2 id="page-title" class="dashboard-title-style">Vendor Dashboard</h2>
+    </header>
+    <main class="dashboard-main">
+      <!-- DASHBOARD VIEW -->
+      <div id="view-dashboard">
+        <section class="alerts-section" id="alerts-section">
+          <!-- Delayed orders alert will become visible here via JS -->
+        </section>
+        <section class="orders-list-section" id="vendor-orders">
+          <!-- Orders active list loaded here -->
+        </section>
+      </div>
+
+      <!-- MY PRODUCTS VIEW -->
+      <div id="view-products" class="hidden">
+        <div class="card"
+          style="background: white; padding: 1.5rem; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+            <h3 style="margin: 0;">My Products</h3>
+            <button id="add-product-btn"
+              style="background: #22c55e; color: white; border: none; padding: 0.5rem 1rem; border-radius: 4px; cursor: pointer;">+
+              Add Product</button>
+          </div>
+          <div id="products-list">
+            <!-- Products list injected here -->
+          </div>
+        </div>
+
+        <!-- Add Product Form -->
+        <div id="add-product-form-container" class="hidden"
+          style="margin-top: 1rem; background: white; padding: 1.5rem; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+          <h4 style="margin-bottom: 1rem;">Add New Product</h4>
+          <form id="add-product-form">
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
+              <div>
+                <label style="display: block; margin-bottom: 0.25rem; color: #333;">Name</label>
+                <input type="text" id="product-name" required
+                  style="width: 100%; padding: 0.5rem; border: 1px solid #ddd; border-radius: 4px; box-sizing: border-box;">
+              </div>
+              <div>
+                <label style="display: block; margin-bottom: 0.25rem; color: #333;">Price (₹)</label>
+                <input type="number" id="product-cost" required
+                  style="width: 100%; padding: 0.5rem; border: 1px solid #ddd; border-radius: 4px; box-sizing: border-box;">
+              </div>
+              <div>
+                <label style="display: block; margin-bottom: 0.25rem; color: #333;">Brand</label>
+                <input type="text" id="product-brand" required
+                  style="width: 100%; padding: 0.5rem; border: 1px solid #ddd; border-radius: 4px; box-sizing: border-box;">
+              </div>
+              <div>
+                <label style="display: block; margin-bottom: 0.25rem; color: #333;">Category</label>
+                <input type="text" id="product-category" required
+                  style="width: 100%; padding: 0.5rem; border: 1px solid #ddd; border-radius: 4px; box-sizing: border-box;">
+              </div>
+              <div style="grid-column: span 2;">
+                <label style="display: block; margin-bottom: 0.25rem; color: #333;">Product Image</label>
+                <input type="file" id="product-image" accept="image/*"
+                  style="width: 100%; padding: 0.5rem; border: 1px solid #ddd; border-radius: 4px; box-sizing: border-box;">
+                <div id="image-preview-container" style="margin-top: 0.5rem; display: none;">
+                  <p style="font-size: 0.8rem; color: #666; margin-bottom: 0.25rem;">Current Image:</p>
+                  <img id="image-preview" src="" alt="Preview"
+                    style="max-height: 100px; border-radius: 4px; border: 1px solid #eee;">
+                </div>
+              </div>
+            </div>
+            <div style="margin-top: 1rem; display: flex; gap: 0.5rem;">
+              <button type="submit"
+                style="background: #22c55e; color: white; border: none; padding: 0.5rem 1rem; border-radius: 4px; cursor: pointer;">Save
+                Product</button>
+              <button type="button" id="cancel-add-product"
+                style="background: #f3f4f6; color: #333; border: 1px solid #ddd; padding: 0.5rem 1rem; border-radius: 4px; cursor: pointer;">Cancel</button>
+            </div>
+          </form>
+        </div>
+      </div>
+
+      <!-- PERFORMANCE VIEW -->
+      <div id="view-performance" class="hidden">
+        <section class="charts-section">
+          <div class="chart-placeholder" id="chart-vendor-performance"></div>
+        </section>
+      </div>
+
+      <!-- FEEDBACK VIEW -->
+      <div id="view-feedback" class="hidden">
+        <div class="card"
+          style="background: white; padding: 1.5rem; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+          <h3 style="margin-bottom: 1rem;">Customer Feedback</h3>
+          <div id="feedback-list">
+            <!-- Feedback list injected here -->
+          </div>
+        </div>
+      </div>
+
+      <!-- ACCOUNT VIEW -->
+      <div id="view-account" class="hidden">
+        <div class="account-details"
+          style="background: white; padding: 2rem; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); max-width: 600px;">
+          <h3 style="margin-bottom: 1.5rem; border-bottom: 2px solid #f0f0f0; padding-bottom: 0.5rem;">My Account</h3>
+          <div style="display: grid; gap: 1rem;">
+            <div style="display: grid; grid-template-columns: 120px 1fr; align-items: center;">
+              <strong style="color: #666;">Name:</strong>
+              <span id="account-name" style="font-size: 1.1rem;">-</span>
+            </div>
+            <div style="display: grid; grid-template-columns: 120px 1fr; align-items: center;">
+              <strong style="color: #666;">Email:</strong>
+              <span id="account-email" style="font-size: 1.1rem;">-</span>
+            </div>
+            <div style="display: grid; grid-template-columns: 120px 1fr; align-items: center;">
+              <strong style="color: #666;">Role:</strong>
+              <span id="account-role"
+                style="text-transform: capitalize; background: #e5e7eb; padding: 0.25rem 0.75rem; border-radius: 999px; width: fit-content;">-</span>
+            </div>
+
+          </div>
+
+          <!-- Change Password Section -->
+          <div class="password-change-section" style="margin-top: 2rem; padding-top: 2rem; border-top: 1px solid #eee;">
+            <button id="toggle-password-btn"
+              style="padding: 0.75rem 1.5rem; background: #f3f4f6; color: #1f2937; border: 1px solid #ddd; border-radius: 4px; cursor: pointer; width: 100%; text-align: left; font-weight: bold; display: flex; justify-content: space-between; align-items: center;">
+              Change Password
+              <span>▼</span>
+            </button>
+            <div id="password-form-container" class="hidden"
+              style="margin-top: 1rem; padding: 1rem; background: #f9fafb; border-radius: 4px;">
+              <form id="change-password-form" style="max-width: 400px;">
+                <div class="form-group" style="margin-bottom: 1rem;">
+                  <label for="old-password" style="display: block; margin-bottom: 0.5rem; color: #666;">Old
+                    Password</label>
+                  <input type="password" id="old-password" required
+                    style="width: 100%; padding: 0.75rem; border: 1px solid #ddd; border-radius: 4px;">
+                </div>
+                <div class="form-group" style="margin-bottom: 1rem;">
+                  <label for="new-password" style="display: block; margin-bottom: 0.5rem; color: #666;">New
+                    Password</label>
+                  <input type="password" id="new-password" required minlength="6"
+                    style="width: 100%; padding: 0.75rem; border: 1px solid #ddd; border-radius: 4px;">
+                </div>
+                <button type="submit" class="btn-primary"
+                  style="padding: 0.75rem 1.5rem; background: var(--color-primary); color: black; border: none; border-radius: 4px; cursor: pointer;">Update
+                  Password</button>
+              </form>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </main>
+  </div>
+  <script src="/scripts/dashboardCommon.js"></script>
+  <script type="module" src="/scripts/vendorDashboard.js"></script>
+</body>
+
+</html>

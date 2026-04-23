@@ -1,0 +1,358 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>TrackEasy Admin Dashboard</title>
+  <link rel="stylesheet" href="/trackeasy-pro-v3.css">
+  <style>
+    /* forced light-mode reset */
+    body {
+      overflow-y: auto;
+      background-color: #f4f7fe !important;
+      color: #111827 !important;
+    }
+
+    .sidebar {
+      width: 220px;
+      position: fixed;
+      left: 0;
+      top: 0;
+      bottom: 0;
+      background: #1f2937;
+      color: #fff;
+      padding: 1rem;
+      z-index: 1000;
+    }
+
+    .content-wrapper {
+      margin-left: 240px;
+      padding: 20px;
+      background-color: #f4f7fe !important;
+      min-height: 100vh;
+    }
+
+    .dashboard-main {
+      background: #f4f7fe !important;
+      min-height: calc(100vh - 100px);
+    }
+
+    .card-grid {
+      display: flex;
+      gap: 1rem;
+      flex-wrap: wrap
+    }
+
+    .orders-table {
+      width: 100%;
+      border-collapse: collapse
+    }
+
+    .orders-table th,
+    .orders-table td {
+      padding: .5rem;
+      border: 1px solid #ddd
+    }
+
+    .filter-btn {
+      padding: 0.5rem 1rem;
+      border: 1px solid #ddd;
+      background: #fff;
+      cursor: pointer;
+      border-radius: 4px;
+      font-size: 0.9rem;
+      transition: all 0.2s;
+    }
+
+    .filter-btn:hover {
+      background: #f0f0f0;
+    }
+
+    .filter-btn.active {
+      background: #1f2937;
+      color: #fff;
+      border-color: #1f2937;
+    }
+
+    .hidden {
+      display: none;
+    }
+
+    /* Notification Bell Styles */
+    .notification-container { position: absolute; top: 1rem; right: 2rem; cursor: pointer; z-index: 1001; }
+    .bell-icon { width: 24px; height: 24px; fill: #4b5563; transition: transform 0.2s; }
+    .notification-container:hover .bell-icon { transform: scale(1.1); }
+    .notification-badge { position: absolute; top: -5px; right: -5px; background: #ef4444; color: white; font-size: 0.7rem; font-weight: bold; padding: 0.1rem 0.4rem; border-radius: 999px; display: none; }
+    .notification-dropdown { position: absolute; top: 3.5rem; right: 0; width: 320px; background: white; border-radius: 8px; box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05); border: 1px solid #e5e7eb; display: none; z-index: 1002; max-height: 400px; overflow-y: auto; }
+    .notification-dropdown.active { display: block; }
+    .notification-header { padding: 0.75rem 1rem; border-bottom: 1px solid #f3f4f6; font-weight: 600; color: #111827; display: flex; justify-content: space-between; align-items: center; }
+    .notification-item { padding: 0.75rem 1rem; border-bottom: 1px solid #f3f4f6; transition: background 0.2s; }
+    .notification-item:hover { background: #f9fafb; }
+    .notification-item:last-child { border-bottom: none; }
+    .notif-user { font-size: 0.9rem; font-weight: 600; color: #374151; margin-bottom: 0.25rem; }
+    .notif-reason { font-size: 0.8rem; color: #ef4444; margin-bottom: 0.25rem; }
+    .notif-time { font-size: 0.7rem; color: #9ca3af; }
+    .notif-empty { padding: 2rem 1rem; text-align: center; color: #6b7280; font-size: 0.9rem; }
+    
+    #toast-container { position: fixed; top: 20px; right: 20px; z-index: 10000; display: flex; flex-direction: column; gap: 10px; pointer-events: none; }
+    .toast { background: white; border-left: 5px solid #ef4444; padding: 1rem 1.25rem; border-radius: 12px; box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1); display: flex; align-items: flex-start; gap: 12px; animation: toastSlideIn 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards; min-width: 320px; pointer-events: auto; }
+    @keyframes toastSlideIn { from { transform: translateX(120%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+    .toast.hide { animation: toastSlideOut 0.3s ease-in forwards; }
+    @keyframes toastSlideOut { from { transform: translateX(0); opacity: 1; } to { transform: translateX(120%); opacity: 0; } }
+    
+    .password-wrapper { position: relative; }
+    .toggle-password { position: absolute; right: 10px; top: 50%; transform: translateY(-50%); background: none; border: none; cursor: pointer; color: #9ca3af; padding: 0; display: flex; align-items: center; justify-content: center; }
+    .eye-icon { width: 20px; height: 20px; }
+    
+    .bell-icon.pulse { animation: bellPulse 1.5s infinite ease-in-out; stroke: #ef4444 !important; fill: #fee2e2 !important; }
+    @keyframes bellPulse { 0% { transform: scale(1); rotate: 0deg; } 10% { transform: scale(1.1); rotate: 10deg; } 20% { transform: scale(1.1); rotate: -10deg; } 30% { transform: scale(1.1); rotate: 10deg; } 40% { transform: scale(1.1); rotate: -10deg; } 50% { transform: scale(1); rotate: 0deg; } 100% { transform: scale(1); rotate: 0deg; } }
+  </style>
+  <link rel="icon" type="image/png" href="/logo.png">
+</head>
+
+<body>
+  <div id="toast-container"></div>
+  <aside class="sidebar">
+    <div class="sidebar-logo" style="display: flex; align-items: center; justify-content: center; gap: 10px;">
+      <img src="/logo.png" alt="Logo" style="height: 32px; width: 32px;">
+      <span class="trackeasy-gradient-text">TrackEasy</span>
+    </div>
+    <nav class="sidebar-nav">
+      <ul>
+        <li><a href="/admin-dashboard.html" class="active" id="nav-dashboard">Dashboard</a></li>
+        <li><a href="#" id="nav-orders">Orders</a></li>
+        <li><a href="#" id="nav-analytics">Analytics</a></li>
+        <li><a href="#" id="nav-users">User Details</a></li>
+        <li><a href="#" id="nav-feedback">Feedback</a></li>
+        <li><a href="#" id="nav-account">Account</a></li>
+      </ul>
+    </nav>
+    <button id="logout-btn" class="btn btn-secondary sidebar-logout">Logout</button>
+  </aside>
+  <div class="content-wrapper">
+    <header class="topnav" style="display: flex; flex-direction: column; align-items: center; padding: 20px 0; position: relative; border-bottom: 1px solid #e5e7eb; background: white; margin: -20px -20px 20px -20px; width: auto; box-shadow: 0 1px 2px rgba(0,0,0,0.05);">
+      <div class="notification-container" id="notif-bell-container">
+        <svg class="bell-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path>
+          <path d="M13.73 21a2 2 0 0 1-3.46 0"></path>
+        </svg>
+        <span class="notification-badge" id="notif-badge">0</span>
+        <div class="notification-dropdown" id="notif-dropdown">
+          <div class="notification-header">
+            <span>Blocked Users History</span>
+            <button id="close-notif-btn" style="background: none; border: none; cursor: pointer; color: #9ca3af;">&times;</button>
+          </div>
+          <div id="notif-list">
+            <div class="notif-empty">No blocked users found</div>
+          </div>
+        </div>
+      </div>
+      <img src="/logo.png" alt="Logo" style="height: 60px; width: 60px;">
+      <h2 id="page-title" class="dashboard-title-style">Admin Dashboard</h2>
+    </header>
+    <main class="dashboard-main">
+      <!-- DASHBOARD VIEW -->
+      <div id="view-dashboard">
+        <section class="card-grid" id="summary-cards">
+          <!-- Cards rendered via JS -->
+        </section>
+        <section class="charts-section">
+          <div class="chart-placeholder" id="chart-delivery-trend"></div>
+        </section>
+      </div>
+
+      <!-- ORDERS VIEW -->
+      <div id="view-orders" class="hidden">
+        <section class="orders-section"
+          style="background: white; padding: 1.5rem; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+            <h3>Orders Overview</h3>
+            <div id="order-filters" style="display: flex; gap: 0.5rem;">
+              <button class="filter-btn active" data-filter="all">All Orders</button>
+              <button class="filter-btn" data-filter="ontime">On-Time</button>
+              <button class="filter-btn" data-filter="delayed">Delayed</button>
+              <button class="filter-btn" data-filter="failed">Failed</button>
+            </div>
+          </div>
+          <table class="orders-table" id="orders-table">
+            <thead>
+              <tr>
+                <th>Order ID</th>
+                <th>Customer</th>
+                <th>Status</th>
+                <th>Date</th>
+                <th>Amount</th>
+                <th>Risk Score</th>
+                <th>Delivery</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              <!-- Table rows rendered by JS -->
+            </tbody>
+          </table>
+        </section>
+      </div>
+
+      <!-- ANALYTICS VIEW -->
+      <div id="view-analytics" class="hidden">
+        <div class="analytics-grid" style="display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem;">
+          <div class="chart-container"
+            style="background: white; padding: 1.5rem; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+            <h3 style="margin-bottom: 1rem;">Vendor Performance</h3>
+            <div class="chart-placeholder" id="chart-vendor-performance"></div>
+          </div>
+          <div class="chart-container"
+            style="background: white; padding: 1.5rem; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+            <h3 style="margin-bottom: 1rem;">Order Distribution</h3>
+            <div id="analytics-bar-chart"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- USER DETAILS VIEW -->
+      <div id="view-users" class="hidden">
+        <section class="users-section"
+          style="background: white; padding: 1.5rem; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+          <h3 style="margin-bottom: 1rem;">User Management</h3>
+          <table class="orders-table" id="users-table">
+            <thead>
+              <tr>
+                <th>Username</th>
+                <th>Email</th>
+                <th>Role</th>
+                <th>Risk Score</th>
+                <th>Status</th>
+                <th>Joined</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="users-tbody">
+            </tbody>
+          </table>
+        </section>
+      </div>
+
+      <!-- FEEDBACK VIEW -->
+      <div id="view-feedback" class="hidden">
+        <section class="feedback-section"
+          style="background: white; padding: 1.5rem; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+          <h3>Customer Feedback</h3>
+          <div id="feedback-list">
+            <!-- Feedback list items rendered by JS -->
+          </div>
+        </section>
+      </div>
+
+      <!-- ACCOUNT VIEW -->
+      <div id="view-account" class="hidden">
+        <div class="account-details"
+          style="background: white; padding: 2rem; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); max-width: 600px;">
+          <h3 style="margin-bottom: 1.5rem; border-bottom: 2px solid #f0f0f0; padding-bottom: 0.5rem;">Admin Profile</h3>
+          <div style="display: grid; gap: 1rem;">
+            <div style="display: grid; grid-template-columns: 120px 1fr; align-items: center;">
+              <strong style="color: #666;">Name:</strong>
+              <span id="account-name" style="font-size: 1.1rem;">-</span>
+            </div>
+            <div style="display: grid; grid-template-columns: 120px 1fr; align-items: center;">
+              <strong style="color: #666;">Email:</strong>
+              <span id="account-email" style="font-size: 1.1rem;">-</span>
+            </div>
+            <div style="display: grid; grid-template-columns: 120px 1fr; align-items: center;">
+              <strong style="color: #666;">Role:</strong>
+              <span id="account-role"
+                style="text-transform: capitalize; background: #e5e7eb; padding: 0.25rem 0.75rem; border-radius: 999px; width: fit-content;">-</span>
+            </div>
+          </div>
+
+          <!-- Change Password Section -->
+          <div class="password-change-section" style="margin-top: 2rem; padding-top: 2rem; border-top: 1px solid #eee;">
+            <button id="toggle-password-btn"
+              style="padding: 0.75rem 1.5rem; background: #f3f4f6; color: #1f2937; border: 1px solid #ddd; border-radius: 4px; cursor: pointer; width: 100%; text-align: left; font-weight: bold; display: flex; justify-content: space-between; align-items: center;">
+              Change Password
+              <span>▼</span>
+            </button>
+            <div id="password-form-container" class="hidden"
+              style="margin-top: 1rem; padding: 1rem; background: #f9fafb; border-radius: 4px;">
+              <form id="change-password-form" style="max-width: 400px;">
+                <div class="form-group" style="margin-bottom: 1rem;">
+                  <label for="old-password" style="display: block; margin-bottom: 0.5rem; color: #666;">Old Password</label>
+                  <div class="password-wrapper">
+                    <input type="password" id="old-password" required
+                      style="width: 100%; padding: 0.75rem; padding-right: 45px; border: 1px solid #ddd; border-radius: 4px;">
+                    <button type="button" class="toggle-password" onclick="togglePasswordVisibility('old-password')">
+                      <svg id="old-password-eye-closed" class="eye-icon" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21" />
+                      </svg>
+                      <svg id="old-password-eye-open" class="eye-icon hidden" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                      </svg>
+                    </button>
+                  </div>
+                </div>
+                <div class="form-group" style="margin-bottom: 1rem;">
+                  <label for="new-password" style="display: block; margin-bottom: 0.5rem; color: #666;">New Password</label>
+                  <div class="password-wrapper">
+                    <input type="password" id="new-password" required minlength="6"
+                      style="width: 100%; padding: 0.75rem; padding-right: 45px; border: 1px solid #ddd; border-radius: 4px;">
+                    <button type="button" class="toggle-password" onclick="togglePasswordVisibility('new-password')">
+                      <svg id="new-password-eye-closed" class="eye-icon" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21" />
+                      </svg>
+                      <svg id="new-password-eye-open" class="eye-icon hidden" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                      </svg>
+                    </button>
+                  </div>
+                </div>
+                <button type="submit" class="btn-primary"
+                  style="padding: 0.75rem 1.5rem; background: #11998e; color: white; border: none; border-radius: 4px; cursor: pointer;">Update Password</button>
+              </form>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </main>
+  </div>
+
+  <script>
+    // Robust Navigation Fallback
+    document.addEventListener('DOMContentLoaded', () => {
+      console.log('Navigation Fallback Active');
+      const navLinks = document.querySelectorAll('.sidebar-nav a');
+      const viewDivs = document.querySelectorAll('.dashboard-main > div');
+
+      navLinks.forEach(link => {
+        link.addEventListener('click', (e) => {
+          const id = link.id;
+          if (!id || !id.startsWith('nav-')) return;
+          
+          e.preventDefault();
+          const targetView = id.replace('nav-', 'view-');
+          console.log('Switching to:', targetView);
+
+          // Update links
+          navLinks.forEach(l => l.classList.remove('active'));
+          link.classList.add('active');
+
+          // Update views
+          viewDivs.forEach(div => {
+            if (div.id === targetView) {
+              div.classList.remove('hidden');
+            } else {
+              div.classList.add('hidden');
+            }
+          });
+        });
+      });
+    });
+  </script>
+  <script src="/scripts/dashboardCommon.js"></script>
+  <script type="module" src="/scripts/adminDashboard.js?v=2"></script>
+</body>
+
+</html>

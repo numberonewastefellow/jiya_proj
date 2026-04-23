@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PhonePe Payment Gateway</title>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --phonepe-purple: #5f259f;
+      --phonepe-dark: #4a1c7a;
+      --bg-light: #f6f7fb;
+    }
+
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+      font-family: 'Outfit', sans-serif;
+    }
+
+    body {
+      background-color: var(--bg-light);
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      min-height: 100vh;
+      color: #333;
+    }
+
+    .container {
+      background: white;
+      width: 100%;
+      max-width: 400px;
+      border-radius: 20px;
+      box-shadow: 0 10px 40px rgba(95, 37, 159, 0.1);
+      overflow: hidden;
+      animation: slideUp 0.5s ease-out;
+    }
+
+    @keyframes slideUp {
+      from { transform: translateY(20px); opacity: 0; }
+      to { transform: translateY(0); opacity: 1; }
+    }
+
+    .header {
+      background: var(--phonepe-purple);
+      padding: 2.5rem 2rem;
+      text-align: center;
+      color: white;
+      position: relative;
+    }
+
+    .logo {
+      font-size: 2rem;
+      font-weight: 700;
+      letter-spacing: -1px;
+      margin-bottom: 0.5rem;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+    }
+
+    .content {
+      padding: 2rem;
+    }
+
+    .amount-card {
+      background: #fdfbff;
+      border: 1px solid #eee;
+      border-radius: 16px;
+      padding: 1.5rem;
+      text-align: center;
+      margin-bottom: 2rem;
+    }
+
+    .amount-label {
+      font-size: 0.9rem;
+      color: #666;
+      margin-bottom: 0.5rem;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+    }
+
+    .amount-value {
+      font-size: 2.5rem;
+      font-weight: 700;
+      color: var(--phonepe-purple);
+    }
+
+    .info-box {
+      margin-bottom: 2rem;
+      font-size: 0.95rem;
+      line-height: 1.6;
+      color: #555;
+    }
+
+    .btn-container {
+      display: flex;
+      flex-direction: column;
+      gap: 1rem;
+    }
+
+    .btn {
+      padding: 1rem;
+      border: none;
+      border-radius: 12px;
+      font-size: 1rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.3s ease;
+      text-align: center;
+      text-decoration: none;
+    }
+
+    .btn-pay {
+      background: var(--phonepe-purple);
+      color: white;
+    }
+
+    .btn-pay:hover {
+      background: var(--phonepe-dark);
+      transform: translateY(-2px);
+      box-shadow: 0 5px 15px rgba(95, 37, 159, 0.3);
+    }
+
+    .btn-cancel {
+      background: #f1f1f1;
+      color: #666;
+    }
+
+    .btn-cancel:hover {
+      background: #e5e5e5;
+    }
+
+    .footer {
+      padding: 1.5rem;
+      text-align: center;
+      font-size: 0.8rem;
+      color: #999;
+      border-top: 1px solid #f1f1f1;
+    }
+
+    .secure-badge {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      margin-top: 5px;
+    }
+  </style>
+</head>
+<body>
+
+  <div class="container" id="payment-view">
+    <div class="header">
+      <div class="logo">
+        <span style="background:white; color:var(--phonepe-purple); width:32px; height:32px; border-radius:8px; display:flex; align-items:center; justify-content:center; font-size:1.2rem;">P</span>
+        PhonePe
+      </div>
+      <p style="opacity: 0.8; font-size: 0.9rem;">Secure Checkout Gateway</p>
+    </div>
+
+    <div class="content">
+      <div class="amount-card">
+        <p class="amount-label">Paying to TrackEasy 3.O</p>
+        <p class="amount-value" id="order-amount">₹0.00</p>
+      </div>
+
+      <div class="info-box">
+        <p><strong>Merchant ID:</strong> TRACKEASY_ECOM_2026</p>
+        <p><strong>Transaction ID:</strong> <span id="txn-id">#TXN_LOADING</span></p>
+      </div>
+
+      <div class="btn-container">
+        <button onclick="processStatus('success')" class="btn btn-pay">Pay Securely</button>
+        <button onclick="processStatus('failed')" class="btn btn-cancel">Cancel Payment</button>
+      </div>
+    </div>
+
+    <div class="footer">
+      <div class="secure-badge">
+        <svg style="width:14px;height:14px;" viewBox="0 0 20 20" fill="currentColor">
+          <path fill-rule="evenodd" d="M2.166 4.9L9.032 1.487c.633-.313 1.349-.311 1.981.004L17.834 5.2a1 1 0 01.597.907v6.611c0 3.097-1.848 5.702-4.437 6.786l-4.524 1.838a1.5 1.5 0 01-1.14 0l-4.524-1.838A7.26 7.26 0 011.566 12.72V6.107a1 1 0 01.6-.907zM10 18a.5.5 0 100-1 .5.5 0 000 1z" />
+        </svg>
+        <span>PCI DSS Compliant & 256-bit SSL Secure</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="container hidden" id="loading-view" style="display:none; padding: 4rem 2rem; text-align:center;">
+    <div class="spinner" style="width:50px; height:50px; border:4px solid #f3f3f3; border-top:4px solid var(--phonepe-purple); border-radius:50%; margin: 0 auto 2rem; animation: spin 1s linear infinite;"></div>
+    <h2>Redirecting back...</h2>
+    <p style="color:#666; margin-top:1rem;">Please do not close this window</p>
+  </div>
+
+  <style>
+    @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+  </style>
+
+  <script>
+    const params = new URLSearchParams(window.location.search);
+    const amount = params.get('amount') || '0.00';
+    document.getElementById('order-amount').textContent = `₹${amount}`;
+    document.getElementById('txn-id').textContent = `#TXN_${Math.random().toString(36).substr(2, 9).toUpperCase()}`;
+
+    function processStatus(status) {
+      document.getElementById('payment-view').style.display = 'none';
+      document.getElementById('loading-view').style.display = 'block';
+      
+      setTimeout(() => {
+        window.location.href = `/customer-dashboard.html?payment=${status}&provider=PhonePe`;
+      }, 1500);
+    }
+  </script>
+</body>
+</html>

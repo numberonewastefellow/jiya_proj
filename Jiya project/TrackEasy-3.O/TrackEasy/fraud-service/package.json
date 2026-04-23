@@ -1,0 +1,23 @@
+{
+  "name": "fraud-service",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "start": "node fraudServer.js",
+    "dev": "node fraudServer.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "axios": "^1.15.0",
+    "brain.js": "^2.0.0-beta.24",
+    "cors": "^2.8.6",
+    "dotenv": "^17.3.1",
+    "express": "^5.2.1",
+    "geoip-lite": "^1.4.10",
+    "mongoose": "^9.3.2"
+  }
+}

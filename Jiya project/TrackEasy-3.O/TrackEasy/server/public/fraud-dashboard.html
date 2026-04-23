@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Fraud Detection Dashboard - TrackEasy</title>
+    <link rel="stylesheet" href="styles/styles.css">
+    <style>
+        .fraud-dashboard-container { max-width: 1200px; margin: 0 auto; padding: 2rem; font-family: sans-serif; }
+        .dashboard-header { display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid #eee; padding-bottom: 1rem; }
+        .fraud-table { width: 100%; border-collapse: collapse; margin-top: 2rem; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+        .fraud-table th, .fraud-table td { padding: 12px 15px; text-align: left; border-bottom: 1px solid #ddd; }
+        .fraud-table thead tr { background-color: #2c3e50; color: #ffffff; text-align: left; }
+        .fraud-table tbody tr:nth-of-type(even) { background-color: #f3f3f3; }
+        .fraud-table tbody tr:hover { background-color: #f1f1f1; }
+        .badge-pending { background-color: #ffeeba; color: #856404; padding: 4px 8px; border-radius: 4px; font-size: 0.9em; font-weight: bold; }
+        .badge-reviewed { background-color: #d4edda; color: #155724; padding: 4px 8px; border-radius: 4px; font-size: 0.9em; font-weight: bold; }
+        .badge-blocked { background-color: #f8d7da; color: #721c24; padding: 4px 8px; border-radius: 4px; font-size: 0.9em; font-weight: bold; }
+        .score-high { color: #d9534f; font-weight: bold; font-size: 1.1em; }
+        .score-med { color: #f0ad4e; font-weight: bold; font-size: 1.1em; }
+        .score-low { color: #5cb85c; font-weight: bold; font-size: 1.1em; }
+        .action-btn { cursor: pointer; padding: 6px 12px; background-color: #0275d8; color: white; border: none; border-radius: 4px; transition: background 0.2s; }
+        .action-btn:hover { background-color: #025aa5; }
+        
+        /* Graph Styles */
+        #fraud-graph-container {
+            margin-top: 3rem;
+            background: white;
+            padding: 1.5rem;
+            border-radius: 8px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            border: 1px solid #ddd;
+        }
+        #cy {
+            width: 100%;
+            height: 500px;
+            border: 1px solid #eee;
+            background-color: #fafafa;
+        }
+        .graph-controls {
+            margin-bottom: 1rem;
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+    </style>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/cytoscape/3.26.0/cytoscape.min.js"></script>
+</head>
+<body style="margin: 0; background-color: #f8f9fa;">
+    <div class="fraud-dashboard-container">
+        <div class="dashboard-header">
+            <h1 style="color: #2c3e50;">🛡️ Security & Fraud Center</h1>
+            <div>
+                <a href="index.html" style="text-decoration: none; color: #0275d8; font-weight: bold; margin-right: 15px;">⬅ Back to Store</a>
+                <button onclick="fetchAlerts()" class="action-btn" style="background-color: #5cb85c;">↻ Refresh Alerts</button>
+            </div>
+        </div>
+        
+        <table class="fraud-table">
+            <thead>
+                <tr>
+                    <th>Date Detected</th>
+                    <th>User ID</th>
+                    <th>Risk Score</th>
+                    <th>Violation Reason</th>
+                    <th>Status</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody id="alerts-tbody">
+                <tr><td colspan="6" style="text-align: center;">Loading alerts...</td></tr>
+            </tbody>
+        </table>
+
+        <!-- Fraud Ring Visualization Section -->
+        <div id="fraud-graph-container">
+            <div class="graph-controls">
+                <h2 style="margin: 0; color: #2c3e50;">🕸️ Fraud Network Analysis</h2>
+                <span style="flex-grow: 1;"></span>
+                <button onclick="loadGraph()" class="action-btn" style="background-color: #5cb85c;">↻ Reload Graph</button>
+                <button onclick="blockSelectedCluster()" id="block-cluster-btn" class="action-btn" style="background-color: #d9534f; display: none;">Block Selected Cluster</button>
+            </div>
+            <p style="color: #666; font-size: 0.9rem; margin-bottom: 1rem;">
+                Nodes represent users. Edges (lines) show shared <b>Address</b>, <b>Phone</b>, or <b>IP</b>. 
+                <span style="color: #d9534f; font-weight: bold;">Red</span> nodes are already blocked.
+            </p>
+            <div id="cy"></div>
+            <div id="graph-details" style="margin-top: 1rem; padding: 10px; background: #f9f9f9; border-radius: 4px; min-height: 40px; border: 1px hidden #ddd;">
+                <i>Click a node or edge to see relationship details.</i>
+            </div>
+        </div>
+    </div>
+
+    <script src="scripts/fraudDashboard.js"></script>
+    <script src="scripts/fraudGraph.js"></script>
+</body>
+</html>

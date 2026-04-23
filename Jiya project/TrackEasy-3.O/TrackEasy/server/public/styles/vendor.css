@@ -1,0 +1,101 @@
+/* Vendor Dashboard Styles */
+.vendor-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 10px;
+    background: #fff;
+    border-radius: 8px;
+    overflow: hidden;
+    box-shadow: 0 2px 5px rgba(0, 0, 0, 0.05);
+}
+
+.vendor-table th,
+.vendor-table td {
+    padding: 12px 15px;
+    text-align: left;
+    border-bottom: 1px solid #eee;
+}
+
+.vendor-table th {
+    background: #f8f9fa;
+    font-weight: 600;
+    color: #333;
+}
+
+.btn-accept {
+    background: #28a745;
+    color: white;
+    border: none;
+    padding: 6px 12px;
+    border-radius: 4px;
+    cursor: pointer;
+    margin-right: 5px;
+}
+
+.btn-reject {
+    background: #dc3545;
+    color: white;
+    border: none;
+    padding: 6px 12px;
+    border-radius: 4px;
+    cursor: pointer;
+}
+
+.btn-next {
+    background: #007bff;
+    color: white;
+    border: none;
+    padding: 6px 12px;
+    border-radius: 4px;
+    cursor: pointer;
+}
+
+.alert-pending {
+    background: #fff3cd;
+    color: #856404;
+    padding: 10px;
+    border-radius: 5px;
+    margin-bottom: 15px;
+    border: 1px solid #ffeeba;
+}
+
+.status-badge {
+    padding: 4px 8px;
+    border-radius: 12px;
+    font-size: 0.85rem;
+    font-weight: 500;
+}
+
+.status-Pending {
+    background: #ffeeba;
+    color: #856404;
+}
+
+.status-Accepted {
+    background: #d1ecf1;
+    color: #0c5460;
+}
+
+.status-Rejected {
+    background: #f8d7da;
+    color: #721c24;
+}
+
+.status-Packed {
+    background: #e2e3e5;
+    color: #383d41;
+}
+
+.status-On.Board {
+    background: #cce5ff;
+    color: #004085;
+}
+
+.status-Delivered {
+    background: #d4edda;
+    color: #155724;
+}
+.status-Delayed\.Delivery {
+    background: #f8d7da;
+    color: #8B0000;
+}
