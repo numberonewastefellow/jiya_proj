@@ -1,0 +1,12 @@
+**/node_modules
+**/npm-debug.log
+**/.env
+**/.env.*
+**/*.log
+.git
+.gitignore
+**/Dockerfile
+**/.dockerignore
+docker-compose.yml
+server/public/images/uploads
+fraud-service/ml/*.csv

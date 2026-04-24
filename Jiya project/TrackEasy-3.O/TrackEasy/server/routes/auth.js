@@ -157,7 +157,8 @@ router.post('/login', async (req, res) => {
             };
 
             if (typeof fetch !== 'undefined') {
-                await fetch('http://localhost:5002/api/fraud/log-event', {
+                const fraudServiceUrl = process.env.FRAUD_SERVICE_URL || 'http://localhost:5002';
+                await fetch(`${fraudServiceUrl}/api/fraud/log-event`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(eventData)

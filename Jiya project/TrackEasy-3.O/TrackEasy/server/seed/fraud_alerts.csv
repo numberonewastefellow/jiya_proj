@@ -1,0 +1,4 @@
+transactionId,user_email,riskScore,violationReason,status,explanation_json
+seed-fa-001,customer.eve@trackeasy.com,9,"Velocity anomaly: 10x avg quantity on high-value item (Bluetooth Speaker x10)",Pending,"{""ruleScore"":6,""lstmProb"":0.82,""gnnProb"":0.71,""autoMSE"":0.45,""geoSpeed"":0,""clusterSize"":3}"
+seed-fa-002,customer.eve@trackeasy.com,8,"Multiple payment failures in 2 minutes (card retry pattern)",Pending,"{""ruleScore"":7,""lstmProb"":0.55,""gnnProb"":0.62,""autoMSE"":0.31}"
+seed-fa-003,customer.bob@trackeasy.com,4,"Unusual checkout speed - fast-click pattern detected by LSTM",Reviewed,"{""ruleScore"":3,""lstmProb"":0.78,""gnnProb"":0.12}"

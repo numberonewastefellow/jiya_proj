@@ -415,6 +415,14 @@ async function handlePayment() {
     });
 
     if (response.requiresOTP) {
+        const demoBanner = document.getElementById('otp-demo-banner');
+        const demoCode = document.getElementById('otp-demo-code');
+        if (response.demoMode && response.demoOtp) {
+            if (demoCode) demoCode.textContent = response.demoOtp;
+            if (demoBanner) demoBanner.style.display = 'block';
+        } else if (demoBanner) {
+            demoBanner.style.display = 'none';
+        }
         alert(response.message || "Unusual activity detected. Please verify with OTP.");
         document.getElementById('otp-modal').classList.remove('hidden');
         document.getElementById('otp-modal').style.display = 'flex';

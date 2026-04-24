@@ -62,7 +62,8 @@ router.post('/', authMiddleware, async (req, res) => {
         // Notify Fraud Service to evaluate the transaction before proceeding
         try {
             if (typeof fetch !== 'undefined') {
-                const fraudResponse = await fetch('http://localhost:5002/api/fraud/evaluate-transaction', {
+                const fraudServiceUrl = process.env.FRAUD_SERVICE_URL || 'http://localhost:5002';
+                const fraudResponse = await fetch(`${fraudServiceUrl}/api/fraud/evaluate-transaction`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
@@ -149,10 +150,15 @@ router.post('/', authMiddleware, async (req, res) => {
             }
             // ----------------------------------
             
-            return res.status(403).json({ 
-                success: false, 
+            const demoMode = !process.env.TWILIO_ACCOUNT_SID || !process.env.TWILIO_AUTH_TOKEN;
+            return res.status(403).json({
+                success: false,
                 requiresOTP: true,
-                message: "Verification required due to unusual activity. OTP sent to registered mobile number." 
+                demoMode,
+                demoOtp: demoMode ? otp : undefined,
+                message: demoMode
+                    ? "Demo mode: Twilio is not configured. Use the OTP displayed on this screen."
+                    : "Verification required due to unusual activity. OTP sent to registered mobile number."
             });
         }
 

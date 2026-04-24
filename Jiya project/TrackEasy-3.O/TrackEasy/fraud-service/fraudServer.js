@@ -18,6 +18,7 @@ app.use(express.json());
 
 // Import Models
 // Note: We're reusing the models from the main app's codebase.
+const User = require('../server/models/User');
 const EventLog = require('../server/models/EventLog');
 const FraudAlert = require('../server/models/FraudAlert');
 const UserSession = require('../server/models/UserSession');

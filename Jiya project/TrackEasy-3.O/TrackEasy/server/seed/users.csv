@@ -1,0 +1,7 @@
+email,username,password,role,phoneNumber,address
+manager1@trackeasy.com,manager1,password123,manager,1000000010,HQ Mumbai
+vendor.fresh@trackeasy.com,freshmart,password123,vendor,1000000020,Fresh Street 1 Mumbai
+vendor.tech@trackeasy.com,techworld,password123,vendor,1000000021,Tech Hub 22 Bangalore
+customer.alice@trackeasy.com,alice,password123,customer,1000000030,Bandra West Mumbai
+customer.bob@trackeasy.com,bob,password123,customer,1000000031,Koramangala Bangalore
+customer.eve@trackeasy.com,eve,password123,customer,1000000032,Unknown IP Range

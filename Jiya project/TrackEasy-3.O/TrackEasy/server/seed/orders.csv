@@ -1,0 +1,8 @@
+orderId,customer_email,items_json,totalAmount,status,paymentStatus,paymentMethod,days_ago
+seed-ord-001,customer.alice@trackeasy.com,"[{""name"":""Organic Apples 1kg"",""price"":220,""quantity"":2}]",440,Delivered,Paid,UPI,14
+seed-ord-002,customer.alice@trackeasy.com,"[{""name"":""Basmati Rice 5kg"",""price"":480,""quantity"":1},{""name"":""Almond Milk 1L"",""price"":180,""quantity"":2}]",840,Delivered,Paid,Card,7
+seed-ord-003,customer.bob@trackeasy.com,"[{""name"":""Wireless Earbuds"",""price"":2499,""quantity"":1}]",2499,On Board,Paid,Card,1
+seed-ord-004,customer.bob@trackeasy.com,"[{""name"":""Mechanical Keyboard"",""price"":5499,""quantity"":1},{""name"":""USB-C Fast Charger 65W"",""price"":1499,""quantity"":1}]",6998,Pending,Pending,COD,0
+seed-ord-005,customer.eve@trackeasy.com,"[{""name"":""Bluetooth Speaker"",""price"":3999,""quantity"":10}]",39990,Rejected,Failed,Card,2
+seed-ord-006,customer.eve@trackeasy.com,"[{""name"":""Mechanical Keyboard"",""price"":5499,""quantity"":5}]",27495,Pending,Failed,Card,0
+seed-ord-007,customer.alice@trackeasy.com,"[{""name"":""Dark Chocolate 100g"",""price"":150,""quantity"":4}]",600,Accepted,Paid,UPI,2

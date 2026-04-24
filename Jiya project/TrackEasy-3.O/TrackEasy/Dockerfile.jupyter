@@ -1,0 +1,25 @@
+FROM python:3.11-slim
+
+WORKDIR /workspace
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        build-essential \
+        libgomp1 \
+        git \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY fraud-service/ml/requirements.txt /tmp/requirements.txt
+COPY fraud-service/ml/requirements.train.txt /tmp/requirements.train.txt
+
+RUN pip install --no-cache-dir -r /tmp/requirements.train.txt
+
+EXPOSE 8888
+
+CMD ["jupyter", "lab", \
+     "--ip=0.0.0.0", \
+     "--port=8888", \
+     "--no-browser", \
+     "--allow-root", \
+     "--ServerApp.token=", \
+     "--ServerApp.password=", \
+     "--ServerApp.root_dir=/workspace"]

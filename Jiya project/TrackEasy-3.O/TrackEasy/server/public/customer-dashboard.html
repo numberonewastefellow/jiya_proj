@@ -392,7 +392,11 @@
   <div id="otp-modal" class="modal hidden" style="display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.5); align-items: center; justify-content: center; z-index: 1000;">
     <div class="modal-content" style="max-width: 400px; text-align: center; background: white; padding: 2rem; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
       <h2 style="margin-bottom: 1rem;">Verification Required</h2>
-      <p style="margin-bottom: 1.5rem; color: #666;" id="otp-modal-message">Please enter the 6-digit OTP sent to your registered mobile number.</p>
+      <p style="margin-bottom: 1rem; color: #666;" id="otp-modal-message">Please enter the 6-digit OTP sent to your registered mobile number.</p>
+      <div id="otp-demo-banner" style="display: none; margin-bottom: 1.25rem; padding: 0.75rem 1rem; background: #fef3c7; border: 1px solid #f59e0b; border-radius: 8px; color: #92400e; font-size: 0.9rem; line-height: 1.4; text-align: center;">
+        <strong>Demo Mode</strong> — Twilio is not configured, so no SMS is sent.<br>
+        Your OTP: <strong id="otp-demo-code" style="font-size: 1.5rem; letter-spacing: 6px; font-family: monospace; color: #111;">------</strong>
+      </div>
       <form id="otp-form" style="display: flex; flex-direction: column; gap: 1rem;">
         <input type="text" id="otp-input" placeholder="123456" maxlength="6" pattern="\d{6}" required
           style="padding: 1rem; font-size: 1.5rem; letter-spacing: 5px; text-align: center; border: 2px solid #e5e7eb; border-radius: 8px;">
