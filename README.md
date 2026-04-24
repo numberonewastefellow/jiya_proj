@@ -2,6 +2,8 @@
 
 An e-commerce order tracking platform (**TrackEasy**) with a multi-model fraud detection microservice, inspired by the IJACSA 2019 paper *"Fraud Detection using Machine Learning in e-Commerce"* (Saputra & Suharjito) and extended with modern deep learning + ensemble meta-learning.
 
+> **📖 See also: [PIPELINE.md](PIPELINE.md)** — end-to-end walkthrough of the fraud detection pipeline (rule layer, ML models, ensemble, action mapping, worked examples).
+
 ## What's inside
 
 | Service | Tech | Port | Role |
