@@ -650,22 +650,23 @@ function renderPlaygroundResult(res) {
 
   // Rules
   const rulesEl = document.getElementById('pg-rules');
+  rulesEl.style.gridTemplateColumns = 'repeat(auto-fit, minmax(320px, 1fr))';
   rulesEl.innerHTML = res.rules.map(r => {
     const fired = r.fired;
     const border = fired ? '#dc2626' : '#d1d5db';
     const bg = fired ? '#fef2f2' : '#fff';
     const badge = fired
-      ? `<span style="background:#dc2626; color:#fff; padding:2px 8px; border-radius:99px; font-size:0.7rem; font-weight:600;">FIRED${r.points ? ' +' + r.points : ''}</span>`
+      ? `<span style="background:#dc2626; color:#fff; padding:2px 8px; border-radius:99px; font-size:0.7rem; font-weight:600; white-space:nowrap;">FIRED${r.points ? ' +' + r.points : ''}</span>`
       : `<span style="background:#e5e7eb; color:#6b7280; padding:2px 8px; border-radius:99px; font-size:0.7rem; font-weight:500;">no</span>`;
     return `
-      <div style="border:1px solid ${border}; border-radius:8px; padding:0.75rem; background:${bg}; font-size:0.85rem;">
-        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.4rem;">
-          <strong>[${r.id}] ${r.name}</strong>
+      <div style="border:1px solid ${border}; border-radius:8px; padding:0.75rem; background:${bg}; font-size:0.85rem; min-width:0; overflow:hidden;">
+        <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:0.5rem; margin-bottom:0.4rem;">
+          <strong style="word-break:break-word; line-height:1.3;">[${r.id}] ${r.name}</strong>
           ${badge}
         </div>
         <div style="color:#6b7280; font-size:0.78rem; margin-bottom:0.3rem;">${r.origin}</div>
-        <div style="font-family:monospace; background:#f3f4f6; padding:0.35rem 0.5rem; border-radius:4px; font-size:0.78rem; margin-bottom:0.4rem;">${r.formula}</div>
-        <div style="font-family:monospace; font-size:0.78rem;">${escapeHtml(JSON.stringify(r.inputs))}</div>
+        <pre style="font-family:monospace; background:#f3f4f6; padding:0.45rem 0.55rem; border-radius:4px; font-size:0.78rem; margin:0 0 0.4rem 0; white-space:pre-wrap; word-break:break-word; overflow-wrap:anywhere;">${escapeHtml(r.formula)}</pre>
+        <pre style="font-family:monospace; font-size:0.76rem; margin:0; padding:0.4rem 0.5rem; background:#fafafa; border:1px solid #e5e7eb; border-radius:4px; white-space:pre-wrap; word-break:break-word; overflow-wrap:anywhere;">${escapeHtml(JSON.stringify(r.inputs, null, 2))}</pre>
       </div>
     `;
   }).join('');
@@ -699,9 +700,9 @@ function renderPlaygroundResult(res) {
           </div>
           <div>
             <div style="font-weight:600; margin-bottom:0.3rem; font-size:0.85rem;">Sent to model</div>
-            <pre style="background:#0f172a; color:#e2e8f0; padding:0.6rem; border-radius:5px; font-size:0.75rem; margin:0; max-height:120px; overflow:auto;">${escapeHtml(JSON.stringify(m.input, null, 2))}</pre>
+            <pre style="background:#0f172a; color:#e2e8f0; padding:0.6rem; border-radius:5px; font-size:0.75rem; margin:0; max-height:200px; overflow:auto; white-space:pre-wrap; word-break:break-word; overflow-wrap:anywhere;">${escapeHtml(JSON.stringify(m.input, null, 2))}</pre>
             <div style="font-weight:600; margin:0.6rem 0 0.3rem 0; font-size:0.85rem;">Model returned</div>
-            <pre style="background:#0f172a; color:#86efac; padding:0.6rem; border-radius:5px; font-size:0.75rem; margin:0; max-height:120px; overflow:auto;">${escapeHtml(JSON.stringify(m.output || m.error || m.skipReason || null, null, 2))}</pre>
+            <pre style="background:#0f172a; color:#86efac; padding:0.6rem; border-radius:5px; font-size:0.75rem; margin:0; max-height:200px; overflow:auto; white-space:pre-wrap; word-break:break-word; overflow-wrap:anywhere;">${escapeHtml(JSON.stringify(m.output || m.error || m.skipReason || null, null, 2))}</pre>
             ${m.threshold != null ? `<div style="margin-top:0.4rem; font-size:0.78rem; color:#6b7280;">Fires when output > <strong>${m.threshold}</strong></div>` : ''}
           </div>
         </div>
