@@ -125,6 +125,7 @@
         <li><a href="#" id="nav-analytics">Analytics</a></li>
         <li><a href="#" id="nav-users">User Details</a></li>
         <li><a href="#" id="nav-blocked">Blocked Users</a></li>
+        <li><a href="#" id="nav-playground">Inference Playground</a></li>
         <li><a href="#" id="nav-feedback">Feedback</a></li>
         <li><a href="#" id="nav-account">Account</a></li>
       </ul>
@@ -262,6 +263,66 @@
         </section>
       </div>
 
+      <!-- INFERENCE PLAYGROUND VIEW -->
+      <div id="view-playground" class="hidden">
+        <section style="background:#fff; padding:1.5rem; border-radius:8px; box-shadow:0 2px 4px rgba(0,0,0,0.08);">
+          <h3 style="margin:0 0 0.4rem 0;">Fraud Detection — Inference Playground</h3>
+          <p style="margin:0 0 1.5rem 0; color:#6b7280; font-size:0.92rem;">
+            Run the full evaluation pipeline against any customer with simulated order parameters.
+            Read-only — no FraudAlert is saved, no user state is changed.
+          </p>
+
+          <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(180px, 1fr)); gap:1rem; margin-bottom:1.25rem;">
+            <div>
+              <label style="display:block; font-weight:600; margin-bottom:0.25rem; font-size:0.88rem;">Customer</label>
+              <select id="pg-customer" style="width:100%; padding:0.5rem; border:1px solid #d1d5db; border-radius:6px;"></select>
+            </div>
+            <div>
+              <label style="display:block; font-weight:600; margin-bottom:0.25rem; font-size:0.88rem;">Items in cart</label>
+              <select id="pg-items" style="width:100%; padding:0.5rem; border:1px solid #d1d5db; border-radius:6px;"></select>
+            </div>
+            <div>
+              <label style="display:block; font-weight:600; margin-bottom:0.25rem; font-size:0.88rem;">Quantity per item</label>
+              <select id="pg-qty" style="width:100%; padding:0.5rem; border:1px solid #d1d5db; border-radius:6px;"></select>
+            </div>
+            <div>
+              <label style="display:block; font-weight:600; margin-bottom:0.25rem; font-size:0.88rem;">Total amount (₹)</label>
+              <select id="pg-amount" style="width:100%; padding:0.5rem; border:1px solid #d1d5db; border-radius:6px;"></select>
+            </div>
+            <div>
+              <label style="display:block; font-weight:600; margin-bottom:0.25rem; font-size:0.88rem;">Payment method</label>
+              <select id="pg-method" style="width:100%; padding:0.5rem; border:1px solid #d1d5db; border-radius:6px;">
+                <option>COD</option><option>Card</option><option>UPI</option>
+              </select>
+            </div>
+            <div>
+              <label style="display:block; font-weight:600; margin-bottom:0.25rem; font-size:0.88rem;">Hour of day (0-23)</label>
+              <select id="pg-hour" style="width:100%; padding:0.5rem; border:1px solid #d1d5db; border-radius:6px;"></select>
+            </div>
+            <div style="display:flex; align-items:end;">
+              <button id="pg-run" onclick="runInferencePlayground()" style="width:100%; padding:0.6rem 1rem; background:#3b82f6; color:#fff; border:none; border-radius:6px; cursor:pointer; font-weight:600;">Run Inference</button>
+            </div>
+          </div>
+
+          <div id="pg-result" style="display:none;">
+            <!-- Aggregate banner -->
+            <div id="pg-aggregate" style="margin-bottom:1.5rem;"></div>
+            <!-- Rules section -->
+            <h4 style="margin:1rem 0 0.6rem 0; font-size:1rem;">Rule layer (deterministic)</h4>
+            <div id="pg-rules" style="display:grid; grid-template-columns:repeat(auto-fit, minmax(280px, 1fr)); gap:0.75rem;"></div>
+            <!-- Models section -->
+            <h4 style="margin:1.5rem 0 0.6rem 0; font-size:1rem;">ML models</h4>
+            <div id="pg-models" style="display:flex; flex-direction:column; gap:1rem;"></div>
+            <!-- SHAP explanation -->
+            <h4 style="margin:1.5rem 0 0.6rem 0; font-size:1rem;">Master brain — feature contributions (SHAP-style)</h4>
+            <div id="pg-shap" style="background:#f9fafb; padding:1rem; border-radius:8px;"></div>
+            <!-- Customer/event context -->
+            <h4 style="margin:1.5rem 0 0.6rem 0; font-size:1rem;">Customer context</h4>
+            <pre id="pg-context" style="background:#0f172a; color:#e2e8f0; padding:1rem; border-radius:8px; font-size:0.85rem; overflow-x:auto;"></pre>
+          </div>
+        </section>
+      </div>
+
       <!-- FEEDBACK VIEW -->
       <div id="view-feedback" class="hidden">
         <section class="feedback-section"
@@ -380,7 +441,7 @@
     });
   </script>
   <script src="/scripts/dashboardCommon.js"></script>
-  <script type="module" src="/scripts/adminDashboard.js?v=3"></script>
+  <script type="module" src="/scripts/adminDashboard.js?v=4"></script>
 </body>
 
 </html>

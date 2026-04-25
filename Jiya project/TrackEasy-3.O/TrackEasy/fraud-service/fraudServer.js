@@ -398,6 +398,339 @@ app.post('/api/fraud/evaluate-transaction', async (req, res) => {
     }
 });
 
+// =====================================================================
+// Inference Debug Endpoint — drives the admin Inference Playground.
+// Read-only: no FraudAlert saved, no User mutated. Returns a per-rule
+// and per-model breakdown so the UI can show input → transformation →
+// output for each component.
+// =====================================================================
+app.post('/api/fraud/inference-debug', async (req, res) => {
+    try {
+        const { customerId, simulatedOrder = {} } = req.body || {};
+        if (!customerId) return res.status(400).json({ error: 'customerId required' });
+
+        const Order = require('../server/models/Order');
+        const customer = await User.findById(customerId).select('username email role');
+        if (!customer) return res.status(404).json({ error: 'Customer not found' });
+
+        const EVENT_MAP = {
+            login: 1, add_to_cart: 2, remove_from_cart: 3,
+            checkout_attempt: 4, payment_failed: 5, payment_success: 6
+        };
+
+        const items = Array.isArray(simulatedOrder.items) ? simulatedOrder.items : [];
+        const totalAmount = Number(simulatedOrder.totalAmount) || 0;
+        const paymentMethod = simulatedOrder.paymentMethod || 'COD';
+
+        const recentEvents = await EventLog.find({ userId: customerId })
+            .sort({ timestamp: -1 })
+            .limit(20)
+            .lean();
+
+        const pastOrders = await Order.find({ customer: customerId, status: { $ne: 'Rejected' } }).lean();
+        const totalPastItems = pastOrders.reduce((s, o) => s + ((o.items && o.items.length) || 0), 0);
+        const avgItemsPerOrder = pastOrders.length ? totalPastItems / pastOrders.length : 3;
+        const totalPastAmount = pastOrders.reduce((s, o) => s + (o.totalAmount || 0), 0);
+        const avgAmountPerOrder = pastOrders.length ? totalPastAmount / pastOrders.length : 0;
+
+        const rules = [];
+        const models = [];
+        let riskScore = 0;
+
+        // ---- Server-side velocity rules (mirroring orders.js) ----
+        const QTY_SPIKE_MULT = 3;
+        const AMT_SPIKE_MULT = 5;
+        const QTY_NOISE_FLOOR = 5;
+        const STATIC_HIGH_VALUE = 50000;
+        const currentItemTotalQty = items.reduce((s, it) => s + (Number(it.quantity) || 1), 0);
+        const qtyLimit = Math.max(avgItemsPerOrder * QTY_SPIKE_MULT, QTY_NOISE_FLOOR);
+        const amtLimit = avgAmountPerOrder * AMT_SPIKE_MULT;
+
+        rules.push({
+            id: 'SV1',
+            name: 'Server velocity — quantity spike',
+            origin: 'server (orders.js)',
+            formula: `currentQty > max(avgQty × ${QTY_SPIKE_MULT}, ${QTY_NOISE_FLOOR})`,
+            inputs: { currentQty: currentItemTotalQty, avgQty: +avgItemsPerOrder.toFixed(2), threshold: +qtyLimit.toFixed(2) },
+            fired: currentItemTotalQty > qtyLimit,
+            triggers: 'requires_otp + spikeAlert (server-side, before fraud-service is called)',
+            note: 'This rule short-circuits to OTP at the server before fraud-service runs.'
+        });
+        rules.push({
+            id: 'SV2',
+            name: 'Server velocity — high-value transaction',
+            origin: 'server (orders.js)',
+            formula: `totalAmount > ₹${STATIC_HIGH_VALUE.toLocaleString('en-IN')}`,
+            inputs: { totalAmount, threshold: STATIC_HIGH_VALUE },
+            fired: totalAmount > STATIC_HIGH_VALUE,
+            triggers: 'requires_otp'
+        });
+        rules.push({
+            id: 'SV3',
+            name: 'Server velocity — amount spike',
+            origin: 'server (orders.js)',
+            formula: `totalAmount > avgAmount × ${AMT_SPIKE_MULT}`,
+            inputs: { totalAmount, avgAmount: Math.round(avgAmountPerOrder), threshold: Math.round(amtLimit) },
+            fired: totalAmount > amtLimit && totalAmount <= STATIC_HIGH_VALUE && currentItemTotalQty <= qtyLimit,
+            triggers: 'requires_otp'
+        });
+
+        // ---- Fraud-service rules ----
+        const addToCartEvents = recentEvents.filter(e => e.eventType === 'add_to_cart');
+        const failedPayments = recentEvents.filter(e => e.eventType === 'payment_failed');
+        const loginEvent = recentEvents.find(e => e.eventType === 'login');
+
+        const r1Fired = addToCartEvents.length > 5;
+        const r1Pts = r1Fired ? addToCartEvents.length * 1 : 0;
+        if (r1Fired) riskScore += r1Pts;
+        rules.push({
+            id: 'R1',
+            name: 'High-frequency cart additions',
+            origin: 'fraud-service',
+            formula: 'if (addToCartEvents > 5) score += addToCartEvents × 1',
+            inputs: { addToCartEvents: addToCartEvents.length },
+            fired: r1Fired,
+            points: r1Pts
+        });
+
+        const r2Fired = failedPayments.length >= 2;
+        const r2Pts = r2Fired ? 4 : 0;
+        if (r2Fired) riskScore += r2Pts;
+        rules.push({
+            id: 'R2',
+            name: 'Multiple payment failures',
+            origin: 'fraud-service',
+            formula: 'if (failedPaymentEvents ≥ 2) score += 4',
+            inputs: { failedPayments: failedPayments.length },
+            fired: r2Fired,
+            points: r2Pts
+        });
+
+        let r3Fired = false, r3Pts = 0, r3Gap = null;
+        if (loginEvent) {
+            r3Gap = (Date.now() - new Date(loginEvent.timestamp).getTime()) / 1000;
+            r3Fired = r3Gap < 15;
+            r3Pts = r3Fired ? 3 : 0;
+            if (r3Fired) riskScore += r3Pts;
+        }
+        rules.push({
+            id: 'R3',
+            name: 'Fast checkout after login',
+            origin: 'fraud-service',
+            formula: 'if (now - lastLogin < 15s) score += 3',
+            inputs: { secondsSinceLogin: r3Gap === null ? 'no recent login' : +r3Gap.toFixed(1) },
+            fired: r3Fired,
+            points: r3Pts
+        });
+
+        const r4Fired = items.length > avgItemsPerOrder * 3 && items.length >= 5;
+        const r4Pts = r4Fired ? 7 : 0;
+        if (r4Fired) riskScore += r4Pts;
+        rules.push({
+            id: 'R4',
+            name: 'Historical quantity anomaly',
+            origin: 'fraud-service',
+            formula: 'if (items > avgItems × 3 AND items ≥ 5) score += 7',
+            inputs: { itemsInCart: items.length, avgItemsPerOrder: +avgItemsPerOrder.toFixed(2), threshold: +(avgItemsPerOrder * 3).toFixed(2) },
+            fired: r4Fired,
+            points: r4Pts
+        });
+
+        rules.push({
+            id: 'R5',
+            name: 'Geospatial "Superman" check',
+            origin: 'fraud-service',
+            formula: 'if (speed > 1000 km/h AND distance > 50 km) score += 8',
+            inputs: { note: 'Skipped in playground — needs IP timeline. Compares request IP geo against last event IP.' },
+            fired: false,
+            points: 0
+        });
+
+        // ---- Model: LSTM behavioural sequence ----
+        const recent10 = recentEvents.slice(0, 10);
+        const eventTypeArr = recent10.map(e => e.eventType);
+        const sequenceIds = recent10.map(e => EVENT_MAP[e.eventType] || 0).reverse();
+        const lstmTransformation = [
+            `Step 1: EventLog.find({ userId }).sort({ timestamp: -1 }).limit(20)  →  ${recentEvents.length} events`,
+            `Step 2: take .slice(0, 10)  →  ${recent10.length} events`,
+            `Step 3: map eventType → integer using EVENT_MAP {login=1, add_to_cart=2, remove_from_cart=3, checkout_attempt=4, payment_failed=5, payment_success=6}`,
+            `Step 4: eventTypes  =  ${JSON.stringify(eventTypeArr)}`,
+            `Step 5: integers   =  ${JSON.stringify(recent10.map(e => EVENT_MAP[e.eventType] || 0))}`,
+            `Step 6: .reverse() to chronological order  →  ${JSON.stringify(sequenceIds)}`,
+            `Step 7: ML side pads to length 10 (zeros at front) → reshape to (1, 10, 1) → LSTM(64) → sigmoid`
+        ];
+        let lstmEntry = {
+            id: 'LSTM',
+            name: 'Deep Learning — Behavioural sequence',
+            endpoint: 'POST /predict/behavioral',
+            transformation: lstmTransformation,
+            input: { sequence: sequenceIds },
+            threshold: 0.85,
+            points: 5,
+            fired: false,
+            output: null,
+            error: null,
+            skipped: recentEvents.length < 5,
+            skipReason: recentEvents.length < 5 ? `Only ${recentEvents.length} recent events; rule requires ≥ 5` : null
+        };
+        if (!lstmEntry.skipped) {
+            try {
+                const r = await axios.post(`${ML_SERVICE_URL}/predict/behavioral`, { sequence: sequenceIds });
+                lstmEntry.output = r.data;
+                lstmEntry.fired = r.data.probability > 0.85;
+                if (lstmEntry.fired) riskScore += lstmEntry.points;
+            } catch (e) { lstmEntry.error = e.message; }
+        }
+        models.push(lstmEntry);
+        const lstmProb = (lstmEntry.output && lstmEntry.output.probability) || 0;
+
+        // ---- Model: GNN ring detection ----
+        let gnnEntry = {
+            id: 'GNN',
+            name: 'Graph Neural Network — fraud ring',
+            endpoint: 'POST /predict/ring',
+            transformation: [
+                `Input is just userId; resolved to a graph node via node_map.json`,
+                `If user not in graph (no shared address/phone/device with anyone in node_map.json), returns probability=0`,
+                `Otherwise: GCN(adj, features) → sigmoid → probability`
+            ],
+            input: { userId: customerId },
+            threshold: 0.85,
+            points: 6,
+            fired: false,
+            output: null,
+            error: null
+        };
+        try {
+            const r = await axios.post(`${ML_SERVICE_URL}/predict/ring`, { userId: customerId });
+            gnnEntry.output = r.data;
+            gnnEntry.fired = (r.data.probability || 0) > 0.85;
+            if (gnnEntry.fired) riskScore += gnnEntry.points;
+        } catch (e) { gnnEntry.error = e.message; }
+        models.push(gnnEntry);
+        const gnnProb = (gnnEntry.output && gnnEntry.output.probability) || 0;
+
+        // ---- Model: Autoencoder unsupervised anomaly ----
+        const now = new Date();
+        const autoFeatures = {
+            amount: totalAmount,
+            items: items.length,
+            hour: simulatedOrder.hour != null ? Number(simulatedOrder.hour) : now.getHours(),
+            day: simulatedOrder.day != null ? Number(simulatedOrder.day) : now.getDay()
+        };
+        let autoEntry = {
+            id: 'AE',
+            name: 'Autoencoder — unsupervised anomaly',
+            endpoint: 'POST /predict/anomaly',
+            transformation: [
+                `Build 4-D vector [amount, items, hour, day]  →  [${autoFeatures.amount}, ${autoFeatures.items}, ${autoFeatures.hour}, ${autoFeatures.day}]`,
+                `scaler.transform(X)   (StandardScaler from training)`,
+                `autoencoder.predict(scaledX)  →  reconstructed`,
+                `MSE = mean((scaled - reconstructed)^2)`,
+                `is_anomaly  = MSE > threshold(2.5)`
+            ],
+            input: { transaction: autoFeatures },
+            threshold: 2.5,
+            points: 4,
+            fired: false,
+            output: null,
+            error: null
+        };
+        try {
+            const r = await axios.post(`${ML_SERVICE_URL}/predict/anomaly`, { transaction: autoFeatures });
+            autoEntry.output = r.data;
+            autoEntry.fired = !!r.data.is_anomaly;
+            if (autoEntry.fired) riskScore += autoEntry.points;
+        } catch (e) { autoEntry.error = e.message; }
+        models.push(autoEntry);
+        const autoMSE = (autoEntry.output && autoEntry.output.mse) || 0;
+
+        // ---- Model: ANN Master Brain + XAI ----
+        const ensembleFeatures = { ruleScore: riskScore, lstmProb, gnnProb, autoMSE, geoSpeed: 0, clusterSize: 1 };
+        let masterEntry = {
+            id: 'ANN',
+            name: 'ANN Master Brain (ensemble)',
+            endpoint: 'POST /predict/master',
+            transformation: [
+                `Build 6-D feature vector [ruleScore, lstmProb, gnnProb, autoMSE, geoSpeed, clusterSize]`,
+                `→ [${riskScore}, ${lstmProb.toFixed(4)}, ${gnnProb.toFixed(4)}, ${autoMSE.toFixed(2)}, 0, 1]`,
+                `ANN(64, relu) → ANN(32, relu) → sigmoid → probability`,
+                `If probability > 0.90: action escalates to requires_otp`
+            ],
+            input: { ensemble_features: ensembleFeatures },
+            threshold: 0.90,
+            points: null,
+            fired: false,
+            output: null,
+            error: null,
+            note: 'Master brain influences action mapping but does not directly add to riskScore.'
+        };
+        let xaiEntry = {
+            id: 'XAI',
+            name: 'XAI — feature attribution (SHAP-like perturbation)',
+            endpoint: 'POST /predict/explain',
+            transformation: [
+                `For each of the 6 features: replace value with baseline mean → re-run ANN`,
+                `contribution = (full_prob - perturbed_prob) × 10`,
+                `Larger positive = pushes towards fraud; negative = pushes away.`
+            ],
+            input: { ensemble_features: ensembleFeatures },
+            output: null,
+            error: null,
+            fired: false,
+            note: 'Explanation only — does not influence the score directly.'
+        };
+        try {
+            const r = await axios.post(`${ML_SERVICE_URL}/predict/master`, { ensemble_features: ensembleFeatures });
+            masterEntry.output = r.data;
+            masterEntry.fired = (r.data.probability || 0) > 0.9;
+        } catch (e) { masterEntry.error = e.message; }
+        try {
+            const r = await axios.post(`${ML_SERVICE_URL}/predict/explain`, { ensemble_features: ensembleFeatures });
+            xaiEntry.output = r.data;
+        } catch (e) { xaiEntry.error = e.message; }
+        models.push(masterEntry, xaiEntry);
+
+        // ---- Action mapping ----
+        const cappedScore = Math.min(10, riskScore);
+        let action = 'allow';
+        if (cappedScore > 8) action = 'block';
+        else if (cappedScore > 6) action = 'requires_otp';
+        else if (cappedScore > 3) action = 'warning';
+        if (masterEntry.fired) action = 'requires_otp'; // master brain escalation
+        if (cappedScore > 8) action = 'block';          // > 8 always wins
+
+        const reasons = []
+            .concat(rules.filter(r => r.fired && r.origin === 'server (orders.js)').map(r => `[${r.id}] ${r.name}`))
+            .concat(rules.filter(r => r.fired && r.origin === 'fraud-service').map(r => `[${r.id}] ${r.name} (+${r.points})`))
+            .concat(models.filter(m => m.fired).map(m => `[${m.id}] ${m.name}${m.points ? ` (+${m.points})` : ''}`));
+
+        res.json({
+            customer: { _id: customer._id, username: customer.username, email: customer.email, role: customer.role },
+            context: {
+                recentEventCount: recentEvents.length,
+                recentEventTypes: recentEvents.map(e => e.eventType),
+                pastOrderCount: pastOrders.length,
+                averageOrderSize: +avgItemsPerOrder.toFixed(2),
+                averageOrderAmount: Math.round(avgAmountPerOrder)
+            },
+            simulatedOrder: { items, totalAmount, paymentMethod, ...autoFeatures },
+            rules,
+            models,
+            aggregate: {
+                riskScore: cappedScore,
+                rawSum: riskScore,
+                action,
+                reasons,
+                explanation: (xaiEntry.output && xaiEntry.output.explanation) || null
+            }
+        });
+    } catch (error) {
+        console.error('Inference debug error:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
 // 3. Get Alerts (For the admin dashboard)
 // GET /api/fraud/alerts
 app.get('/api/fraud/alerts', async (req, res) => {

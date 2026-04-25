@@ -91,6 +91,28 @@ router.get('/analytics/payment-failures', authMiddleware, async (req, res) => {
 });
 
 // ===============================
+// INFERENCE PLAYGROUND (admin demo tool)
+// ===============================
+router.post('/inference-playground', authMiddleware, async (req, res) => {
+    if (req.userRole !== 'admin') return res.status(403).json({ message: 'Access denied' });
+    try {
+        const { customerId, simulatedOrder } = req.body || {};
+        if (!customerId) return res.status(400).json({ message: 'customerId required' });
+        const fraudUrl = process.env.FRAUD_SERVICE_URL || 'http://localhost:5002';
+        const response = await fetch(`${fraudUrl}/api/fraud/inference-debug`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ customerId, simulatedOrder })
+        });
+        const data = await response.json();
+        res.status(response.status).json(data);
+    } catch (err) {
+        console.error('Inference playground error:', err);
+        res.status(500).json({ message: 'Inference proxy failed', error: err.message });
+    }
+});
+
+// ===============================
 // USER MANAGEMENT ENDPOINTS
 // ===============================
 const User = require('../models/User');

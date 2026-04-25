@@ -421,8 +421,8 @@ function renderFilteredOrders(filter) {
 // ===============================
 function setupNavigation() {
   console.log('Initializing Admin Navigation...');
-  const navIds = ['nav-dashboard', 'nav-orders', 'nav-analytics', 'nav-users', 'nav-blocked', 'nav-feedback', 'nav-account'];
-  const viewIds = ['view-dashboard', 'view-orders', 'view-analytics', 'view-users', 'view-blocked', 'view-feedback', 'view-account'];
+  const navIds = ['nav-dashboard', 'nav-orders', 'nav-analytics', 'nav-users', 'nav-blocked', 'nav-playground', 'nav-feedback', 'nav-account'];
+  const viewIds = ['view-dashboard', 'view-orders', 'view-analytics', 'view-users', 'view-blocked', 'view-playground', 'view-feedback', 'view-account'];
 
   navIds.forEach(id => {
     const el = document.getElementById(id);
@@ -471,6 +471,8 @@ function setupNavigation() {
     } else if (viewName === 'blocked') {
       if (typeof loadBlockedUsersData === 'function') loadBlockedUsersData();
       if (typeof startBlockedUsersAutoRefresh === 'function') startBlockedUsersAutoRefresh();
+    } else if (viewName === 'playground') {
+      if (typeof initInferencePlayground === 'function') initInferencePlayground();
     } else if (viewName === 'feedback') {
       if (typeof loadFeedbackData === 'function') loadFeedbackData();
     }
@@ -560,6 +562,189 @@ async function unblockUserFromList(userId) {
 if (typeof window !== 'undefined') {
   window.loadBlockedUsersData = loadBlockedUsersData;
   window.unblockUserFromList = unblockUserFromList;
+}
+
+// =========================================================================
+// INFERENCE PLAYGROUND
+// =========================================================================
+let playgroundInited = false;
+
+async function initInferencePlayground() {
+  if (playgroundInited) return;
+  playgroundInited = true;
+  const fillSelect = (id, opts, defaultVal) => {
+    const sel = document.getElementById(id);
+    if (!sel) return;
+    sel.innerHTML = opts.map(v => `<option value="${v}"${v == defaultVal ? ' selected' : ''}>${v}</option>`).join('');
+  };
+  fillSelect('pg-items', [1, 2, 3, 5, 8, 12, 20, 30, 50], 2);
+  fillSelect('pg-qty', [1, 2, 3, 5, 8, 10, 20, 50], 1);
+  fillSelect('pg-amount', [200, 500, 800, 1500, 3000, 5000, 10000, 25000, 50000, 100000, 250000], 800);
+  fillSelect('pg-hour', Array.from({ length: 24 }, (_, i) => i), new Date().getHours());
+
+  // Load customers into dropdown
+  try {
+    const users = await get('/admin/users');
+    const customers = (users || []).filter(u => u.role === 'customer');
+    const sel = document.getElementById('pg-customer');
+    if (sel) {
+      sel.innerHTML = customers.map(u => `<option value="${u._id}">${u.username} — ${u.email}</option>`).join('');
+    }
+  } catch (e) {
+    console.error('Could not load customers for playground:', e);
+  }
+}
+
+async function runInferencePlayground() {
+  const customerId = document.getElementById('pg-customer').value;
+  if (!customerId) { alert('Pick a customer first'); return; }
+  const itemCount = parseInt(document.getElementById('pg-items').value, 10);
+  const qty = parseInt(document.getElementById('pg-qty').value, 10);
+  const totalAmount = parseInt(document.getElementById('pg-amount').value, 10);
+  const paymentMethod = document.getElementById('pg-method').value;
+  const hour = parseInt(document.getElementById('pg-hour').value, 10);
+
+  // Build a fake items array — just `itemCount` placeholder items each with `qty`
+  const items = Array.from({ length: itemCount }, (_, i) => ({ name: `Item ${i + 1}`, price: Math.round(totalAmount / itemCount), quantity: qty }));
+
+  const btn = document.getElementById('pg-run');
+  if (btn) { btn.disabled = true; btn.textContent = 'Running…'; }
+  try {
+    const res = await post('/admin/inference-playground', {
+      customerId,
+      simulatedOrder: { items, totalAmount, paymentMethod, hour }
+    });
+    renderPlaygroundResult(res);
+  } catch (e) {
+    alert('Inference failed: ' + (e.message || 'unknown'));
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Run Inference'; }
+  }
+}
+
+function renderPlaygroundResult(res) {
+  const wrap = document.getElementById('pg-result');
+  if (!wrap || !res || !res.aggregate) return;
+  wrap.style.display = 'block';
+
+  // Aggregate banner
+  const action = res.aggregate.action;
+  const colour = action === 'block' ? '#dc2626' : action === 'requires_otp' ? '#d97706' : action === 'warning' ? '#ca8a04' : '#16a34a';
+  const icon = action === 'block' ? '🚫' : action === 'requires_otp' ? '⚠️' : action === 'warning' ? '⚠' : '✅';
+  const aggHtml = `
+    <div style="border:2px solid ${colour}; border-radius:10px; padding:1rem 1.25rem; background:${colour}10;">
+      <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.5rem;">
+        <div style="font-size:1.1rem; font-weight:700; color:${colour};">${icon} Action: ${action.toUpperCase()}</div>
+        <div style="font-family:monospace; font-size:0.95rem;">Risk score (capped 0-10): <strong>${res.aggregate.riskScore}</strong> &nbsp;|&nbsp; raw sum: ${res.aggregate.rawSum}</div>
+      </div>
+      ${(res.aggregate.reasons || []).length ? `
+        <div style="margin-top:0.7rem;">
+          <div style="font-weight:600; margin-bottom:0.2rem;">Reasons:</div>
+          <ul style="margin:0 0 0 1.25rem; padding:0;">
+            ${res.aggregate.reasons.map(r => `<li style="margin:2px 0;">${r}</li>`).join('')}
+          </ul>
+        </div>` : ''}
+    </div>
+  `;
+  document.getElementById('pg-aggregate').innerHTML = aggHtml;
+
+  // Rules
+  const rulesEl = document.getElementById('pg-rules');
+  rulesEl.innerHTML = res.rules.map(r => {
+    const fired = r.fired;
+    const border = fired ? '#dc2626' : '#d1d5db';
+    const bg = fired ? '#fef2f2' : '#fff';
+    const badge = fired
+      ? `<span style="background:#dc2626; color:#fff; padding:2px 8px; border-radius:99px; font-size:0.7rem; font-weight:600;">FIRED${r.points ? ' +' + r.points : ''}</span>`
+      : `<span style="background:#e5e7eb; color:#6b7280; padding:2px 8px; border-radius:99px; font-size:0.7rem; font-weight:500;">no</span>`;
+    return `
+      <div style="border:1px solid ${border}; border-radius:8px; padding:0.75rem; background:${bg}; font-size:0.85rem;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.4rem;">
+          <strong>[${r.id}] ${r.name}</strong>
+          ${badge}
+        </div>
+        <div style="color:#6b7280; font-size:0.78rem; margin-bottom:0.3rem;">${r.origin}</div>
+        <div style="font-family:monospace; background:#f3f4f6; padding:0.35rem 0.5rem; border-radius:4px; font-size:0.78rem; margin-bottom:0.4rem;">${r.formula}</div>
+        <div style="font-family:monospace; font-size:0.78rem;">${escapeHtml(JSON.stringify(r.inputs))}</div>
+      </div>
+    `;
+  }).join('');
+
+  // Models
+  const modelsEl = document.getElementById('pg-models');
+  modelsEl.innerHTML = res.models.map(m => {
+    const fired = m.fired;
+    const skipped = m.skipped;
+    const border = fired ? '#dc2626' : skipped ? '#a3a3a3' : '#3b82f6';
+    const bg = fired ? '#fef2f2' : skipped ? '#fafafa' : '#eff6ff';
+    let badge = `<span style="background:#3b82f6; color:#fff; padding:2px 8px; border-radius:99px; font-size:0.72rem; font-weight:600;">CALLED</span>`;
+    if (fired) badge = `<span style="background:#dc2626; color:#fff; padding:2px 8px; border-radius:99px; font-size:0.72rem; font-weight:600;">FIRED${m.points ? ' +' + m.points : ''}</span>`;
+    if (skipped) badge = `<span style="background:#a3a3a3; color:#fff; padding:2px 8px; border-radius:99px; font-size:0.72rem; font-weight:600;">SKIPPED</span>`;
+    if (m.error) badge = `<span style="background:#f59e0b; color:#fff; padding:2px 8px; border-radius:99px; font-size:0.72rem; font-weight:600;">ERROR</span>`;
+    const stepsHtml = (m.transformation || []).map((s, i) => `<div style="margin:3px 0; padding-left:0.4rem; border-left:2px solid #cbd5e1;">${escapeHtml(s)}</div>`).join('');
+    return `
+      <div style="border:1px solid ${border}; border-left:4px solid ${border}; border-radius:8px; padding:1rem; background:${bg};">
+        <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.5rem; margin-bottom:0.6rem;">
+          <div>
+            <strong style="font-size:1rem;">[${m.id}] ${m.name}</strong>
+            ${m.points ? `<span style="margin-left:0.5rem; color:#6b7280; font-size:0.82rem;">contributes +${m.points} when fired</span>` : ''}
+          </div>
+          ${badge}
+        </div>
+        <div style="font-family:monospace; font-size:0.8rem; color:#475569; margin-bottom:0.5rem;">${m.endpoint}</div>
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:1rem; margin-top:0.5rem;">
+          <div>
+            <div style="font-weight:600; margin-bottom:0.3rem; font-size:0.85rem;">Transformation</div>
+            <div style="font-size:0.77rem; line-height:1.45;">${stepsHtml || '<em>None</em>'}</div>
+          </div>
+          <div>
+            <div style="font-weight:600; margin-bottom:0.3rem; font-size:0.85rem;">Sent to model</div>
+            <pre style="background:#0f172a; color:#e2e8f0; padding:0.6rem; border-radius:5px; font-size:0.75rem; margin:0; max-height:120px; overflow:auto;">${escapeHtml(JSON.stringify(m.input, null, 2))}</pre>
+            <div style="font-weight:600; margin:0.6rem 0 0.3rem 0; font-size:0.85rem;">Model returned</div>
+            <pre style="background:#0f172a; color:#86efac; padding:0.6rem; border-radius:5px; font-size:0.75rem; margin:0; max-height:120px; overflow:auto;">${escapeHtml(JSON.stringify(m.output || m.error || m.skipReason || null, null, 2))}</pre>
+            ${m.threshold != null ? `<div style="margin-top:0.4rem; font-size:0.78rem; color:#6b7280;">Fires when output > <strong>${m.threshold}</strong></div>` : ''}
+          </div>
+        </div>
+        ${m.note ? `<div style="margin-top:0.6rem; padding:0.4rem 0.6rem; background:#fef9c3; border-radius:4px; font-size:0.78rem; color:#713f12;">📝 ${m.note}</div>` : ''}
+      </div>
+    `;
+  }).join('');
+
+  // SHAP bars
+  const shapEl = document.getElementById('pg-shap');
+  if (Array.isArray(res.aggregate.explanation) && res.aggregate.explanation.length) {
+    const sorted = res.aggregate.explanation.slice().sort((a, b) => Math.abs(b.contribution) - Math.abs(a.contribution));
+    const maxMag = Math.max.apply(null, sorted.map(e => Math.abs(e.contribution)).concat(0.01));
+    shapEl.innerHTML = sorted.map(item => {
+      const positive = item.contribution >= 0;
+      const widthPct = Math.min(100, (Math.abs(item.contribution) / maxMag) * 100);
+      return `
+        <div style="display:grid; grid-template-columns:120px 1fr 80px; gap:10px; align-items:center; margin:6px 0; font-size:0.9rem;">
+          <span style="font-family:monospace;">${item.feature}</span>
+          <div style="background:#e5e7eb; height:14px; border-radius:3px; overflow:hidden;">
+            <div style="background:${positive ? '#dc2626' : '#16a34a'}; width:${widthPct}%; height:100%;"></div>
+          </div>
+          <span style="text-align:right; font-family:monospace;">${positive ? '+' : ''}${Number(item.contribution).toFixed(2)}</span>
+        </div>
+      `;
+    }).join('');
+  } else {
+    shapEl.innerHTML = '<em style="color:#6b7280; font-size:0.85rem;">No XAI explanation returned (model may have errored).</em>';
+  }
+
+  // Context
+  document.getElementById('pg-context').textContent = JSON.stringify({
+    customer: res.customer, simulatedOrder: res.simulatedOrder, context: res.context
+  }, null, 2);
+}
+
+function escapeHtml(str) {
+  return String(str).replace(/[&<>"]/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch]));
+}
+
+if (typeof window !== 'undefined') {
+  window.runInferencePlayground = runInferencePlayground;
+  window.initInferencePlayground = initInferencePlayground;
 }
 
 // ===============================
