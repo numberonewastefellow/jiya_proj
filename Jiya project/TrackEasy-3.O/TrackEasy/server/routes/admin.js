@@ -144,6 +144,17 @@ router.put('/users/:id/toggle-block', authMiddleware, async (req, res) => {
 
         // Toggle blocked status
         user.isBlocked = !user.isBlocked;
+        if (user.isBlocked) {
+            user.blockReason = user.blockReason || 'Manually blocked by admin';
+            user.blockedAt = new Date();
+            user.blockedUntil = null; // manual blocks are permanent until manually unblocked
+        } else {
+            user.blockReason = null;
+            user.blockedAt = null;
+            user.blockedUntil = null;
+            user.failedOTPAttempts = 0;
+            user.failedLoginAttempts = 0;
+        }
         await user.save();
 
         res.json({

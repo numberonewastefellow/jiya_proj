@@ -28,12 +28,9 @@ const authMiddleware = async (req, res, next) => {
             });
         }
 
-        if (user.isBlocked) {
-            return res.status(403).json({
-                success: false,
-                message: 'Your account has been blocked. Please contact support.'
-            });
-        }
+        // Note: isBlocked is NOT checked here. Blocked users are allowed to log in,
+        // browse, and view their dashboard. The block is enforced only at order-placement
+        // routes (see server/routes/orders.js).
 
         next();
     } catch (error) {

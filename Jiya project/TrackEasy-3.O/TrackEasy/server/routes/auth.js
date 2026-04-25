@@ -98,12 +98,18 @@ router.post('/login', async (req, res) => {
             });
         }
 
-        // Check if user is already blocked
-        if (user.isBlocked) {
-            return res.status(403).json({
-                success: false,
-                message: 'Your account has been blocked. Please contact support.'
-            });
+        // Login is intentionally allowed for blocked users so they can see their
+        // dashboard, pending orders, and the block status. The block is enforced only
+        // at order-placement routes in server/routes/orders.js.
+        // Lazy cooldown expiry still runs on login so a self-expired hold is cleared.
+        if (user.isBlocked && user.blockedUntil && user.blockedUntil < new Date()) {
+            user.isBlocked = false;
+            user.blockedUntil = null;
+            user.blockReason = null;
+            user.failedOTPAttempts = 0;
+            user.failedLoginAttempts = 0;
+            await user.save();
+            console.log(`[AUTO-UNBLOCK] Cooldown expired for user ${user._id} at login`);
         }
 
         // Verify password

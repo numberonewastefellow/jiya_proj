@@ -62,6 +62,12 @@ const userSchema = new mongoose.Schema({
         type: Boolean,
         default: false
     },
+    blockedAt: {
+        type: Date
+    },
+    blockedUntil: {
+        type: Date
+    },
     deviceFingerprint: {
         type: String,
         trim: true

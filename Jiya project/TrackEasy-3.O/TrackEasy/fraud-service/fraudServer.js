@@ -125,6 +125,7 @@ app.post('/api/fraud/evaluate-transaction', async (req, res) => {
         let violationReasons = [];
         let geoSpeed = 0;
         let clusterSize = 1;
+        let xaiExplanation = null;
         
         // Rule 1: High frequency of add_to_cart (bot-like browsing)
         const addToCartEvents = recentEvents.filter(e => e.eventType === 'add_to_cart');
@@ -255,7 +256,7 @@ app.post('/api/fraud/evaluate-transaction', async (req, res) => {
         if (transactionDetails) {
             try {
                 const now = new Date();
-                const amount = transactionDetails.totalSum || 0;
+                const amount = transactionDetails.totalAmount || transactionDetails.totalSum || 0;
                 const items = transactionDetails.items ? transactionDetails.items.length : 0;
                 const hour = now.getHours();
                 const day = now.getDay();
@@ -319,7 +320,6 @@ app.post('/api/fraud/evaluate-transaction', async (req, res) => {
                 }
 
                 // --- FINAL ANN MASTER BRAIN ENSEMBLE ---
-                let xaiExplanation = null;
                 try {
                     const lstmProb = (typeof result !== 'undefined' && result.probability) ? result.probability : 0;
                     const gnnProb = (typeof gnnResult !== 'undefined' && gnnResult.probability) ? gnnResult.probability : 0;
@@ -327,13 +327,13 @@ app.post('/api/fraud/evaluate-transaction', async (req, res) => {
                     
                     // Predict probability
                     const brainResponse = await axios.post(`${ML_SERVICE_URL}/predict/master`, {
-                        ensemble_features: { ruleScore, lstmProb, gnnProb, autoMSE, geoSpeed, clusterSize }
+                        ensemble_features: { ruleScore: riskScore, lstmProb, gnnProb, autoMSE, geoSpeed, clusterSize }
                     });
                     const brainResult = brainResponse.data;
 
                     // Get XAI Explanation
                     const explainResponse = await axios.post(`${ML_SERVICE_URL}/predict/explain`, {
-                        ensemble_features: { ruleScore, lstmProb, gnnProb, autoMSE, geoSpeed, clusterSize }
+                        ensemble_features: { ruleScore: riskScore, lstmProb, gnnProb, autoMSE, geoSpeed, clusterSize }
                     });
                     xaiExplanation = explainResponse.data.explanation;
 
@@ -361,12 +361,15 @@ app.post('/api/fraud/evaluate-transaction', async (req, res) => {
         if (riskScore > 8) {
             action = 'block';
             try {
-                const User = require('../server/models/User');
-                await User.findByIdAndUpdate(userId, { 
+                const cooldownMs = Number(process.env.FRAUD_BLOCK_COOLDOWN_MS) || 60000;
+                const now = new Date();
+                await User.findByIdAndUpdate(userId, {
                     isBlocked: true,
-                    blockReason: `Auto-Blocked by System: Risk Score reached ${riskScore}`
+                    blockReason: `Auto-Blocked by System: Risk Score reached ${riskScore}`,
+                    blockedAt: now,
+                    blockedUntil: new Date(now.getTime() + cooldownMs)
                 });
-                console.log(`[AUTO-BLOCK] User ${userId} blocked due to critical risk score of ${riskScore}.`);
+                console.log(`[AUTO-BLOCK] User ${userId} blocked (risk ${riskScore}), cooldown ${cooldownMs}ms.`);
             } catch (e) {
                 console.error("Failed to auto-block user:", e);
             }

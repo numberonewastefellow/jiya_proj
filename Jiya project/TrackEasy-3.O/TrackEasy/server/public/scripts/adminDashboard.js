@@ -421,8 +421,8 @@ function renderFilteredOrders(filter) {
 // ===============================
 function setupNavigation() {
   console.log('Initializing Admin Navigation...');
-  const navIds = ['nav-dashboard', 'nav-orders', 'nav-analytics', 'nav-users', 'nav-feedback', 'nav-account'];
-  const viewIds = ['view-dashboard', 'view-orders', 'view-analytics', 'view-users', 'view-feedback', 'view-account'];
+  const navIds = ['nav-dashboard', 'nav-orders', 'nav-analytics', 'nav-users', 'nav-blocked', 'nav-feedback', 'nav-account'];
+  const viewIds = ['view-dashboard', 'view-orders', 'view-analytics', 'view-users', 'view-blocked', 'view-feedback', 'view-account'];
 
   navIds.forEach(id => {
     const el = document.getElementById(id);
@@ -468,10 +468,98 @@ function setupNavigation() {
       if (typeof renderAnalyticsBarChart === 'function') renderAnalyticsBarChart();
     } else if (viewName === 'users') {
       if (typeof loadUsersData === 'function') loadUsersData();
+    } else if (viewName === 'blocked') {
+      if (typeof loadBlockedUsersData === 'function') loadBlockedUsersData();
+      if (typeof startBlockedUsersAutoRefresh === 'function') startBlockedUsersAutoRefresh();
     } else if (viewName === 'feedback') {
       if (typeof loadFeedbackData === 'function') loadFeedbackData();
     }
   }
+}
+
+let blockedUsersPollTimer = null;
+
+function startBlockedUsersAutoRefresh() {
+  stopBlockedUsersAutoRefresh();
+  blockedUsersPollTimer = setInterval(() => {
+    const view = document.getElementById('view-blocked');
+    if (view && !view.classList.contains('hidden')) {
+      loadBlockedUsersData();
+    } else {
+      stopBlockedUsersAutoRefresh();
+    }
+  }, 5000);
+}
+
+function stopBlockedUsersAutoRefresh() {
+  if (blockedUsersPollTimer) {
+    clearInterval(blockedUsersPollTimer);
+    blockedUsersPollTimer = null;
+  }
+}
+
+async function loadBlockedUsersData() {
+  const tbody = document.getElementById('blocked-users-tbody');
+  if (!tbody) return;
+  if (!tbody.innerHTML.trim() || tbody.innerHTML.includes('Loading')) {
+    tbody.innerHTML = `<tr><td colspan="7" style="text-align:center; padding:2rem;">Loading...</td></tr>`;
+  }
+  try {
+    const users = await get('/manager/blocked-users');
+    const refreshBtn = document.getElementById('refresh-blocked-btn');
+    if (refreshBtn) refreshBtn.textContent = 'Refresh (last: ' + new Date().toLocaleTimeString() + ')';
+    if (!Array.isArray(users) || users.length === 0) {
+      tbody.innerHTML = `<tr><td colspan="7" style="text-align:center; padding:2rem; color:#6b7280;">No blocked users.</td></tr>`;
+      return;
+    }
+    const now = Date.now();
+    tbody.innerHTML = users.map(u => {
+      const blockedAt = u.blockedAt ? new Date(u.blockedAt) : (u.updatedAt ? new Date(u.updatedAt) : null);
+      const blockedUntil = u.blockedUntil ? new Date(u.blockedUntil) : null;
+      let untilCell;
+      if (!blockedUntil) {
+        untilCell = `<span style="color:#6b7280;">— (manual / permanent)</span>`;
+      } else {
+        const msLeft = blockedUntil.getTime() - now;
+        if (msLeft <= 0) {
+          untilCell = `<span style="color:#16a34a;">expired (will auto-clear on next request)</span>`;
+        } else {
+          const sec = Math.ceil(msLeft / 1000);
+          untilCell = `<span style="color:#d97706;">in ${sec}s (${blockedUntil.toLocaleTimeString()})</span>`;
+        }
+      }
+      return `
+        <tr>
+          <td style="font-weight:500;">${u.username}</td>
+          <td>${u.email}</td>
+          <td><span style="text-transform:capitalize; background:#f3f4f6; padding:0.2rem 0.5rem; border-radius:4px;">${u.role}</span></td>
+          <td style="max-width:300px;">${u.blockReason || '—'}</td>
+          <td>${blockedAt ? blockedAt.toLocaleString() : '—'}</td>
+          <td>${untilCell}</td>
+          <td>
+            <button onclick="unblockUserFromList('${u._id}')" style="background:#16a34a; color:#fff; border:none; padding:0.4rem 0.85rem; border-radius:4px; cursor:pointer; font-size:0.85rem;">Unblock</button>
+          </td>
+        </tr>
+      `;
+    }).join('');
+  } catch (err) {
+    tbody.innerHTML = `<tr><td colspan="7" style="text-align:center; padding:2rem; color:#dc2626;">Error loading blocked users: ${err.message}</td></tr>`;
+  }
+}
+
+async function unblockUserFromList(userId) {
+  try {
+    const result = await put(`/admin/users/${userId}/toggle-block`, {});
+    if (typeof showToast === 'function') showToast('User unblocked', result.message || 'Done');
+    loadBlockedUsersData();
+  } catch (err) {
+    alert('Failed to unblock: ' + (err.message || 'Unknown error'));
+  }
+}
+
+if (typeof window !== 'undefined') {
+  window.loadBlockedUsersData = loadBlockedUsersData;
+  window.unblockUserFromList = unblockUserFromList;
 }
 
 // ===============================
@@ -1151,7 +1239,7 @@ async function loadNotifications() {
 
       if (newBlocks.length > 0) {
         newBlocks.forEach(user => {
-          showToast('Critical: User Blocked', \`\${user.username} was blocked. Reason: \${user.blockReason || 'Unusual activity'}\`);
+          showToast('Critical: User Blocked', `${user.username} was blocked. Reason: ${user.blockReason || 'Unusual activity'}`);
         });
         if (bellIcon) bellIcon.classList.add('pulse');
       }
@@ -1161,13 +1249,13 @@ async function loadNotifications() {
         const blockDate = new Date(user.updatedAt).toLocaleString('en-GB', {
           day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit'
         });
-        return \`
+        return `
           <div class="notification-item">
-            <div class="notif-user">\${user.username} (\${user.role})</div>
-            <div class="notif-reason">\${user.blockReason || 'No reason provided'}</div>
-            <div class="notif-time">\${blockDate}</div>
+            <div class="notif-user">${user.username} (${user.role})</div>
+            <div class="notif-reason">${user.blockReason || 'No reason provided'}</div>
+            <div class="notif-time">${blockDate}</div>
           </div>
-        \`;
+        `;
       }).join('');
     } else {
       badge.textContent = '0';

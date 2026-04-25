@@ -130,7 +130,7 @@ router.get('/blocked-users', authMiddleware, async (req, res) => {
         }
 
         const blockedUsers = await User.find({ isBlocked: true })
-            .select('username email role blockReason updatedAt')
+            .select('username email role blockReason blockedAt blockedUntil updatedAt')
             .sort({ updatedAt: -1 });
 
         res.json(blockedUsers);
@@ -166,8 +166,12 @@ router.put('/users/:id/toggle-block', authMiddleware, async (req, res) => {
         user.isBlocked = !user.isBlocked;
         if (user.isBlocked) {
             user.blockReason = 'Manually blocked by ' + req.userRole;
+            user.blockedAt = new Date();
+            user.blockedUntil = null; // manual blocks are permanent
         } else {
             user.blockReason = null;
+            user.blockedAt = null;
+            user.blockedUntil = null;
             user.failedLoginAttempts = 0;
             user.failedOTPAttempts = 0;
         }

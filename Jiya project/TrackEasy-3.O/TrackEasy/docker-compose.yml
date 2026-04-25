@@ -34,6 +34,7 @@ services:
       PORT: "5002"
       MONGODB_URI: mongodb://mongo:27017/trackeasy
       ML_SERVICE_URL: http://ml-service:8000
+      FRAUD_BLOCK_COOLDOWN_MS: "600000"   # auto-unblock after 10 min (set 0 or very high to disable)
     depends_on:
       mongo:
         condition: service_healthy

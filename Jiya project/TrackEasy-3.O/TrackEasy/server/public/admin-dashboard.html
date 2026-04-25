@@ -124,6 +124,7 @@
         <li><a href="#" id="nav-orders">Orders</a></li>
         <li><a href="#" id="nav-analytics">Analytics</a></li>
         <li><a href="#" id="nav-users">User Details</a></li>
+        <li><a href="#" id="nav-blocked">Blocked Users</a></li>
         <li><a href="#" id="nav-feedback">Feedback</a></li>
         <li><a href="#" id="nav-account">Account</a></li>
       </ul>
@@ -230,6 +231,33 @@
             </thead>
             <tbody id="users-tbody">
             </tbody>
+          </table>
+        </section>
+      </div>
+
+      <!-- BLOCKED USERS VIEW -->
+      <div id="view-blocked" class="hidden">
+        <section class="users-section" style="background: white; padding: 1.5rem; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1rem;">
+            <h3 style="margin:0;">Blocked Users</h3>
+            <button id="refresh-blocked-btn" onclick="loadBlockedUsersData()" style="background:#3b82f6; color:#fff; border:none; padding:0.45rem 0.9rem; border-radius:6px; cursor:pointer; font-size:0.9rem;">Refresh</button>
+          </div>
+          <p style="margin:0 0 1rem 0; color:#6b7280; font-size:0.9rem;">
+            Auto-blocks from the fraud detection system have a configured cooldown and self-release. Manual blocks stay until you unblock them.
+          </p>
+          <table class="orders-table" id="blocked-users-table">
+            <thead>
+              <tr>
+                <th>Username</th>
+                <th>Email</th>
+                <th>Role</th>
+                <th>Reason</th>
+                <th>Blocked At</th>
+                <th>Auto-Unblock</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="blocked-users-tbody"></tbody>
           </table>
         </section>
       </div>
@@ -352,7 +380,7 @@
     });
   </script>
   <script src="/scripts/dashboardCommon.js"></script>
-  <script type="module" src="/scripts/adminDashboard.js?v=2"></script>
+  <script type="module" src="/scripts/adminDashboard.js?v=3"></script>
 </body>
 
 </html>

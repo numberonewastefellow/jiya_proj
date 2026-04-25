@@ -8,9 +8,59 @@ const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
 
 const User = require('../models/User');
 
+/**
+ * Enforces the security-hold block at order-placement routes only.
+ * Blocked users can still log in, browse, and see their orders — they just
+ * can't place new ones while their account is on hold.
+ *
+ * Lazy-clears the block if `blockedUntil` has passed.
+ *
+ * Returns null if the user may proceed, or an object describing the hold
+ * response (caller does `return res.status(403).json(<object>)`).
+ */
+async function enforceOrderBlock(userId) {
+    const user = await User.findById(userId);
+    if (!user) {
+        return { status: 404, body: { success: false, message: 'User not found' } };
+    }
+    if (!user.isBlocked) return null;
+
+    // Lazy cooldown expiry
+    if (user.blockedUntil && user.blockedUntil < new Date()) {
+        user.isBlocked = false;
+        user.blockedUntil = null;
+        user.blockReason = null;
+        user.failedOTPAttempts = 0;
+        user.failedLoginAttempts = 0;
+        await user.save();
+        console.log(`[AUTO-UNBLOCK] Cooldown expired for user ${user._id} at order placement`);
+        return null;
+    }
+
+    const remaining = user.blockedUntil
+        ? Math.max(0, Math.ceil((user.blockedUntil - new Date()) / 1000))
+        : null;
+    return {
+        status: 403,
+        body: {
+            success: false,
+            blocked: true,
+            message: remaining
+                ? `Your account is on a security hold for order placement. Try again in ${remaining}s.`
+                : 'Your account is blocked from placing new orders. Please contact support.',
+            blockedUntil: user.blockedUntil || null,
+            secondsRemaining: remaining,
+            blockReason: user.blockReason || null
+        }
+    };
+}
+
 // Create Order (Customer)
 router.post('/', authMiddleware, async (req, res) => {
     try {
+        const blockResponse = await enforceOrderBlock(req.userId);
+        if (blockResponse) return res.status(blockResponse.status).json(blockResponse.body);
+
         const { items, totalAmount, paymentMethod } = req.body;
 
         // --- Velocity-Based Rate Limiting (Average-Based OTP) ---
@@ -32,26 +82,35 @@ router.post('/', authMiddleware, async (req, res) => {
             averageOrderAmount = historicalTotalAmount / pastOrders.length;
         }
         
-        const qtyLimit = averageOrderSize;
-        const amountSpikeLimit = averageOrderAmount;
-        const staticHighValueLimit = 50000; // Any order > ₹50k is high value
-        
+        // Multipliers — require a real spike, not just "above average"
+        const QTY_SPIKE_MULTIPLIER = 3;     // > 3× recent average
+        const AMOUNT_SPIKE_MULTIPLIER = 5;  // > 5× recent average
+        const QTY_NOISE_FLOOR = 5;          // ignore tiny accounts: also need ≥ 5 items absolute
+        const qtyLimit = Math.max(averageOrderSize * QTY_SPIKE_MULTIPLIER, QTY_NOISE_FLOOR);
+        const amountSpikeLimit = averageOrderAmount * AMOUNT_SPIKE_MULTIPLIER;
+        const staticHighValueLimit = 50000; // Any order > ₹50k is always high-value
+
         let requiresOTP = false;
         let spikeAlert = false;
-        
+        const serverReasons = [];
+        let fraudResult = null;
+
         // --- Security Triggers ---
         if (currentOrderQuantity > qtyLimit) {
             requiresOTP = true;
             spikeAlert = true;
-            console.log(`[VELOCITY] Quantity Spike: ${currentOrderQuantity} > ${qtyLimit.toFixed(1)} (Avg)`);
+            serverReasons.push(`Order quantity ${currentOrderQuantity} is over ${QTY_SPIKE_MULTIPLIER}× your recent average of ${averageOrderSize.toFixed(1)}`);
+            console.log(`[VELOCITY] Quantity Spike: ${currentOrderQuantity} > ${qtyLimit.toFixed(1)} (=${QTY_SPIKE_MULTIPLIER}× avg ${averageOrderSize.toFixed(1)})`);
         } else if (totalAmount > staticHighValueLimit) {
             requiresOTP = true;
             spikeAlert = true;
+            serverReasons.push(`High-value transaction: ₹${totalAmount} is above the ₹${staticHighValueLimit.toLocaleString('en-IN')} high-value threshold`);
             console.log(`[VELOCITY] High Value detected: ₹${totalAmount} > ₹${staticHighValueLimit}`);
         } else if (totalAmount > amountSpikeLimit) {
             requiresOTP = true;
             spikeAlert = true;
-            console.log(`[VELOCITY] Amount Spike: ₹${totalAmount} > ₹${amountSpikeLimit.toFixed(0)} (Avg)`);
+            serverReasons.push(`Amount ₹${totalAmount} is over ${AMOUNT_SPIKE_MULTIPLIER}× your recent average of ₹${averageOrderAmount.toFixed(0)}`);
+            console.log(`[VELOCITY] Amount Spike: ₹${totalAmount} > ₹${amountSpikeLimit.toFixed(0)} (=${AMOUNT_SPIKE_MULTIPLIER}× avg ₹${averageOrderAmount.toFixed(0)})`);
         }
         
         if (requiresOTP) {
@@ -76,12 +135,17 @@ router.post('/', authMiddleware, async (req, res) => {
                 });
                 
                 if (fraudResponse.ok) {
-                    const fraudResult = await fraudResponse.json();
-                    
+                    fraudResult = await fraudResponse.json();
+
                     if (fraudResult.action === 'block') {
                         return res.status(403).json({
                             success: false,
-                            message: "Transaction paused for security review. Your account has been temporarily suspended."
+                            blocked: true,
+                            message: "Transaction blocked: suspected fraud. Your account has been temporarily suspended.",
+                            riskScore: fraudResult.riskScore,
+                            reasons: fraudResult.reasons || [],
+                            explanation: fraudResult.explanation || null,
+                            serverReasons
                         });
                     }
 
@@ -158,7 +222,11 @@ router.post('/', authMiddleware, async (req, res) => {
                 demoOtp: demoMode ? otp : undefined,
                 message: demoMode
                     ? "Demo mode: Twilio is not configured. Use the OTP displayed on this screen."
-                    : "Verification required due to unusual activity. OTP sent to registered mobile number."
+                    : "Verification required due to unusual activity. OTP sent to registered mobile number.",
+                riskScore: fraudResult ? fraudResult.riskScore : null,
+                reasons: (fraudResult && fraudResult.reasons) || [],
+                explanation: (fraudResult && fraudResult.explanation) || null,
+                serverReasons
             });
         }
 
@@ -196,6 +264,9 @@ router.post('/', authMiddleware, async (req, res) => {
 // Verify OTP and Place Order
 router.post('/verify-otp-and-place-order', authMiddleware, async (req, res) => {
     try {
+        const blockResponse = await enforceOrderBlock(req.userId);
+        if (blockResponse) return res.status(blockResponse.status).json(blockResponse.body);
+
         const { otp, items, totalAmount, paymentMethod, deviceFingerprint } = req.body;
         const User = require('../models/User');
         const user = await User.findById(req.userId);
@@ -267,6 +338,9 @@ router.post('/verify-otp-and-place-order', authMiddleware, async (req, res) => {
 // Verify Alternative (Fingerprint / Passkey) and Place Order
 router.post('/verify-alternative', authMiddleware, async (req, res) => {
     try {
+        const blockResponse = await enforceOrderBlock(req.userId);
+        if (blockResponse) return res.status(blockResponse.status).json(blockResponse.body);
+
         const { type, fingerprint, items, totalAmount, paymentMethod } = req.body;
         const User = require('../models/User');
         const user = await User.findById(req.userId);

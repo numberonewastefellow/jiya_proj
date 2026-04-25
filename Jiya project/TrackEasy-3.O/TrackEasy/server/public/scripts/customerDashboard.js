@@ -39,6 +39,8 @@ export async function initCustomerDashboard() {
   window.togglePaymentForms = togglePaymentForms;
   window.handlePayment = handlePayment;
   window.closeOtpModal = closeOtpModal;
+  window.closeFraudBlockModal = closeFraudBlockModal;
+  window.toggleFraudDetailsPanel = toggleFraudDetailsPanel;
   window.registerPasskey = registerPasskey;
   window.verifyWithFingerprint = verifyWithFingerprint;
   window.verifyWithPasskey = verifyWithPasskey;
@@ -423,10 +425,23 @@ async function handlePayment() {
         } else if (demoBanner) {
             demoBanner.style.display = 'none';
         }
-        alert(response.message || "Unusual activity detected. Please verify with OTP.");
+        populateFraudDetailsPanel('otp-fraud-details', response, 'warning');
         document.getElementById('otp-modal').classList.remove('hidden');
         document.getElementById('otp-modal').style.display = 'flex';
         return; // Stop flow and wait for OTP
+    }
+
+    if (response.blocked) {
+        populateFraudDetailsPanel('block-fraud-details', response, 'block');
+        const blockMessageEl = document.getElementById('fraud-block-message');
+        if (blockMessageEl && response.message) blockMessageEl.textContent = response.message;
+        const modal = document.getElementById('fraud-block-modal');
+        if (modal) {
+          modal.classList.remove('hidden');
+          modal.style.display = 'flex';
+        }
+        logPaymentFailure(method);
+        return;
     }
 
     if (response.success || response.order) {
@@ -511,6 +526,106 @@ function closeOtpModal() {
   }
   const otpInput = document.getElementById('otp-input');
   if (otpInput) otpInput.value = '';
+}
+
+function closeFraudBlockModal() {
+  const modal = document.getElementById('fraud-block-modal');
+  if (modal) {
+    modal.classList.add('hidden');
+    modal.style.display = 'none';
+  }
+}
+
+function toggleFraudDetailsPanel(panelId) {
+  const panel = document.getElementById(panelId);
+  if (!panel) return;
+  const body = panel.querySelector('[data-role="body"]');
+  const toggle = panel.querySelector('[data-role="toggle"]');
+  if (!body) return;
+  const open = body.style.display !== 'none';
+  body.style.display = open ? 'none' : 'block';
+  if (toggle) toggle.innerHTML = open ? '&#x25BC;' : '&#x25B2;';
+}
+
+function populateFraudDetailsPanel(panelId, response, kind) {
+  const panel = document.getElementById(panelId);
+  if (!panel) return;
+
+  panel.onclick = null;
+  const header = panel.querySelector('[data-role="header"]');
+  if (header) header.onclick = () => toggleFraudDetailsPanel(panelId);
+
+  const scoreBadge = panel.querySelector('[data-role="score-badge"]');
+  if (scoreBadge) {
+    if (typeof response.riskScore === 'number') {
+      scoreBadge.textContent = 'Risk ' + response.riskScore + '/10';
+      scoreBadge.style.display = 'inline';
+    } else {
+      scoreBadge.style.display = 'none';
+    }
+  }
+
+  const reasonsList = panel.querySelector('[data-role="reasons-list"]');
+  if (reasonsList) {
+    reasonsList.innerHTML = '';
+    const reasons = []
+      .concat(Array.isArray(response.serverReasons) ? response.serverReasons : [])
+      .concat(Array.isArray(response.reasons) ? response.reasons : []);
+    if (reasons.length === 0 && response.message) reasons.push(response.message);
+    if (reasons.length === 0) reasons.push('Transaction flagged by the fraud detection system.');
+    reasons.forEach((r) => {
+      const li = document.createElement('li');
+      li.style.marginBottom = '4px';
+      li.textContent = r;
+      reasonsList.appendChild(li);
+    });
+  }
+
+  const explanationSection = panel.querySelector('[data-role="explanation-section"]');
+  const explanationBars = panel.querySelector('[data-role="explanation-bars"]');
+  if (explanationSection && explanationBars) {
+    if (Array.isArray(response.explanation) && response.explanation.length > 0) {
+      explanationBars.innerHTML = '';
+      const sorted = response.explanation
+        .slice()
+        .sort((a, b) => Math.abs(b.contribution) - Math.abs(a.contribution));
+      const maxMagnitude = Math.max.apply(null, sorted.map(e => Math.abs(e.contribution)).concat(0.01));
+      sorted.forEach((item) => {
+        const positive = item.contribution >= 0;
+        const widthPct = Math.min(100, (Math.abs(item.contribution) / maxMagnitude) * 100);
+        const row = document.createElement('div');
+        row.style.cssText = 'display:grid; grid-template-columns:110px 1fr 64px; gap:10px; align-items:center; margin:6px 0; font-size:0.88rem;';
+        const nameEl = document.createElement('span');
+        nameEl.style.cssText = 'font-family:monospace;';
+        nameEl.textContent = item.feature;
+        const barWrap = document.createElement('div');
+        barWrap.style.cssText = 'background:#f3f4f6; height:12px; border-radius:3px; overflow:hidden;';
+        const bar = document.createElement('div');
+        bar.style.cssText = 'height:100%; width:' + widthPct + '%; background:' + (positive ? '#dc2626' : '#16a34a') + ';';
+        barWrap.appendChild(bar);
+        const valueEl = document.createElement('span');
+        valueEl.style.cssText = 'text-align:right; font-family:monospace; font-size:0.85rem;';
+        valueEl.textContent = (positive ? '+' : '') + Number(item.contribution).toFixed(2);
+        row.appendChild(nameEl);
+        row.appendChild(barWrap);
+        row.appendChild(valueEl);
+        explanationBars.appendChild(row);
+      });
+      explanationSection.style.display = 'block';
+    } else {
+      explanationSection.style.display = 'none';
+    }
+  }
+
+  const body = panel.querySelector('[data-role="body"]');
+  const toggle = panel.querySelector('[data-role="toggle"]');
+  if (body && toggle) {
+    const autoOpen = kind === 'block';
+    body.style.display = autoOpen ? 'block' : 'none';
+    toggle.innerHTML = autoOpen ? '&#x25B2;' : '&#x25BC;';
+  }
+
+  panel.style.display = 'block';
 }
 
 async function logBehavioralEvent(eventType, payload = {}) {

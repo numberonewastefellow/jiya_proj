@@ -413,7 +413,9 @@ function setupNavigation() {
   const viewUsers = document.getElementById('view-users');
   const viewFeedback = document.getElementById('view-feedback');
   const viewAccount = document.getElementById('view-account');
+  const viewBlocked = document.getElementById('view-blocked');
   const navUsers = document.getElementById('nav-users');
+  const navBlocked = document.getElementById('nav-blocked');
 
   if (!navDashboard) return;
 
@@ -437,6 +439,13 @@ function setupNavigation() {
     switchView('users');
   });
 
+  if (navBlocked) {
+    navBlocked.addEventListener('click', (e) => {
+      e.preventDefault();
+      switchView('blocked');
+    });
+  }
+
   navFeedback.addEventListener('click', (e) => {
     e.preventDefault();
     switchView('feedback');
@@ -454,6 +463,7 @@ function setupNavigation() {
     navUsers.classList.remove('active');
     navFeedback.classList.remove('active');
     navAccount.classList.remove('active');
+    if (navBlocked) navBlocked.classList.remove('active');
 
     viewDashboard.classList.add('hidden');
     viewOrders.classList.add('hidden');
@@ -461,6 +471,7 @@ function setupNavigation() {
     viewUsers.classList.add('hidden');
     viewFeedback.classList.add('hidden');
     viewAccount.classList.add('hidden');
+    if (viewBlocked) viewBlocked.classList.add('hidden');
 
     if (view === 'dashboard') {
       navDashboard.classList.add('active');
@@ -476,6 +487,11 @@ function setupNavigation() {
       navUsers.classList.add('active');
       viewUsers.classList.remove('hidden');
       loadUsersData();
+    } else if (view === 'blocked') {
+      if (navBlocked) navBlocked.classList.add('active');
+      if (viewBlocked) viewBlocked.classList.remove('hidden');
+      loadBlockedUsersData();
+      startBlockedUsersAutoRefresh();
     } else if (view === 'account') {
       navAccount.classList.add('active');
       viewAccount.classList.remove('hidden');
@@ -485,6 +501,91 @@ function setupNavigation() {
       loadFeedbackData();
     }
   }
+}
+
+let blockedUsersPollTimer = null;
+
+function startBlockedUsersAutoRefresh() {
+  stopBlockedUsersAutoRefresh();
+  blockedUsersPollTimer = setInterval(() => {
+    const view = document.getElementById('view-blocked');
+    if (view && !view.classList.contains('hidden')) {
+      loadBlockedUsersData();
+    } else {
+      stopBlockedUsersAutoRefresh();
+    }
+  }, 5000);
+}
+
+function stopBlockedUsersAutoRefresh() {
+  if (blockedUsersPollTimer) {
+    clearInterval(blockedUsersPollTimer);
+    blockedUsersPollTimer = null;
+  }
+}
+
+async function loadBlockedUsersData() {
+  const tbody = document.getElementById('blocked-users-tbody');
+  if (!tbody) return;
+  if (!tbody.innerHTML.trim() || tbody.innerHTML.includes('Loading')) {
+    tbody.innerHTML = `<tr><td colspan="7" style="text-align:center; padding:2rem;">Loading...</td></tr>`;
+  }
+  try {
+    const users = await get('/manager/blocked-users');
+    const refreshBtn = document.getElementById('refresh-blocked-btn');
+    if (refreshBtn) refreshBtn.textContent = 'Refresh (last: ' + new Date().toLocaleTimeString() + ')';
+    if (!Array.isArray(users) || users.length === 0) {
+      tbody.innerHTML = `<tr><td colspan="7" style="text-align:center; padding:2rem; color:#6b7280;">No blocked users.</td></tr>`;
+      return;
+    }
+    const now = Date.now();
+    tbody.innerHTML = users.map(u => {
+      const blockedAt = u.blockedAt ? new Date(u.blockedAt) : (u.updatedAt ? new Date(u.updatedAt) : null);
+      const blockedUntil = u.blockedUntil ? new Date(u.blockedUntil) : null;
+      let untilCell;
+      if (!blockedUntil) {
+        untilCell = `<span style="color:#6b7280;">— (manual / permanent)</span>`;
+      } else {
+        const msLeft = blockedUntil.getTime() - now;
+        if (msLeft <= 0) {
+          untilCell = `<span style="color:#16a34a;">expired (auto-clears on next request)</span>`;
+        } else {
+          const sec = Math.ceil(msLeft / 1000);
+          untilCell = `<span style="color:#d97706;">in ${sec}s (${blockedUntil.toLocaleTimeString()})</span>`;
+        }
+      }
+      return `
+        <tr>
+          <td style="font-weight:500;">${u.username}</td>
+          <td>${u.email}</td>
+          <td><span style="text-transform:capitalize; background:#f3f4f6; padding:0.2rem 0.5rem; border-radius:4px;">${u.role}</span></td>
+          <td style="max-width:300px;">${u.blockReason || '—'}</td>
+          <td>${blockedAt ? blockedAt.toLocaleString() : '—'}</td>
+          <td>${untilCell}</td>
+          <td>
+            <button onclick="unblockUserFromList('${u._id}')" style="background:#16a34a; color:#fff; border:none; padding:0.4rem 0.85rem; border-radius:4px; cursor:pointer; font-size:0.85rem;">Unblock</button>
+          </td>
+        </tr>
+      `;
+    }).join('');
+  } catch (err) {
+    tbody.innerHTML = `<tr><td colspan="7" style="text-align:center; padding:2rem; color:#dc2626;">Error: ${err.message}</td></tr>`;
+  }
+}
+
+async function unblockUserFromList(userId) {
+  try {
+    const result = await put(`/manager/users/${userId}/toggle-block`, {});
+    if (typeof showToast === 'function') showToast('User unblocked', result.message || 'Done');
+    loadBlockedUsersData();
+  } catch (err) {
+    alert('Failed to unblock: ' + (err.message || 'Unknown error'));
+  }
+}
+
+if (typeof window !== 'undefined') {
+  window.loadBlockedUsersData = loadBlockedUsersData;
+  window.unblockUserFromList = unblockUserFromList;
 }
 
 async function loadFeedbackData() {
