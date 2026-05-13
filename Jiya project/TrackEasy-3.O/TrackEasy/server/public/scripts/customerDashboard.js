@@ -27,6 +27,11 @@ export async function initCustomerDashboard() {
       if (titleEl && user.username) {
         titleEl.textContent = `${user.username}'s Dashboard`;
       }
+      // Top-bar "Hello, {name}" greeting (shop redesign)
+      const nameEl = document.getElementById('te-account-name');
+      if (nameEl && user.username) {
+        nameEl.textContent = user.username;
+      }
     }
   } catch (e) { console.error('Error setting title:', e); }
 
@@ -99,6 +104,11 @@ function setupNavigation() {
     viewAccount.classList.add('hidden');
     const viewCheckout = document.getElementById('view-checkout');
     if (viewCheckout) viewCheckout.classList.add('hidden');
+    const viewCart = document.getElementById('view-cart');
+    if (viewCart) viewCart.classList.add('hidden');
+
+    // Body-class modes drive the AI-themed top bar / dark backdrop
+    document.body.classList.remove('te-shop-mode', 'te-cart-mode');
 
     if (view === 'dashboard') {
       navDashboard.classList.add('active');
@@ -108,6 +118,16 @@ function setupNavigation() {
       navShop.classList.add('active');
       viewShop.classList.remove('hidden');
       pageTitle.textContent = 'Shop Products';
+      document.body.classList.add('te-shop-mode');
+    } else if (view === 'cart') {
+      // The cart view is reached via the new top-bar cart icon. The Shop nav
+      // pill stays highlighted because the cart is logically part of shopping.
+      navShop.classList.add('active');
+      if (viewCart) viewCart.classList.remove('hidden');
+      pageTitle.textContent = 'Shopping Cart';
+      document.body.classList.add('te-cart-mode');
+      // Re-render the cart so the count + summary fields are fresh.
+      try { renderCart(); } catch (_) { /* renderCart is hoisted at module scope */ }
     } else if (view === 'orders') {
       navOrders.classList.add('active');
       viewOrders.classList.remove('hidden');
@@ -119,7 +139,7 @@ function setupNavigation() {
         viewAccount.style.display = 'block';
       }
       pageTitle.textContent = 'My Account';
-      loadAccountData(); 
+      loadAccountData();
     } else if (view === 'checkout') {
       if (viewCheckout) viewCheckout.classList.remove('hidden');
       pageTitle.textContent = 'Checkout';
@@ -324,28 +344,45 @@ function removeFromCart(index) {
 function renderCart() {
   const tbody = document.getElementById('cart-items');
   const totalSpan = document.getElementById('cart-total');
+  if (!tbody || !totalSpan) return;
+
+  // Top-bar badge + cart-view summary fields (added by the shop redesign)
+  const badge = document.getElementById('te-cart-count');
+  const summaryItems = document.getElementById('te-summary-items');
+  const subtitle = document.getElementById('te-cart-subtitle');
+  const proceedBtn = document.getElementById('te-proceed-btn');
 
   if (cart.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="6">Cart is empty</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="6" class="te-empty">Cart is empty — add some products first.</td></tr>';
     totalSpan.textContent = '0';
+    if (badge) badge.textContent = '0';
+    if (summaryItems) summaryItems.textContent = '0';
+    if (subtitle) subtitle.textContent = 'Your cart is empty';
+    if (proceedBtn) proceedBtn.disabled = true;
     return;
   }
 
   let total = 0;
+  let qtyCount = 0;
   tbody.innerHTML = cart.map((item, index) => {
     total += item.totalPrice;
+    qtyCount += item.quantity;
     return `
       <tr>
-        <td><img src="${item.image}" class="cart-img"></td>
-        <td>${item.name}</td>
+        <td><img src="${item.image}" class="cart-img" alt=""></td>
+        <td><strong>${item.name}</strong></td>
         <td>₹${item.price}</td>
         <td>${item.quantity}</td>
         <td>₹${item.totalPrice}</td>
-        <td><button onclick="removeFromCart(${index})" style="background:red;padding:5px;">X</button></td>
+        <td><button class="te-remove" onclick="removeFromCart(${index})" aria-label="Remove ${item.name}">Remove</button></td>
       </tr>
     `;
   }).join('');
   totalSpan.textContent = total;
+  if (badge) badge.textContent = String(qtyCount);
+  if (summaryItems) summaryItems.textContent = String(qtyCount);
+  if (subtitle) subtitle.textContent = `${qtyCount} item${qtyCount === 1 ? '' : 's'} in your cart · subtotal ₹${total}`;
+  if (proceedBtn) proceedBtn.disabled = false;
 }
 
 // ===============================
@@ -807,20 +844,20 @@ function renderMyOrders(orders) {
     }
 
     return `
-      <div class="order-card" style="color: white;">
-      <div class="order-header" style="border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 0.5rem; margin-bottom: 0.5rem;">
-        <span style="color: white;"><strong>Order #${order._id.slice(-6)}</strong></span>
-        <span class="status-badge status-${order.status.replace(' ', '.')}">${order.status}</span>
+      <div class="order-card te-order-card">
+      <div class="order-header te-order-header">
+        <span class="te-order-id"><strong>Order #${order._id.slice(-6)}</strong></span>
+        <span class="status-badge te-status-badge status-${order.status.replace(' ', '.')}">${order.status}</span>
       </div>
-      <div style="color: #e2e8f0;">
-        <p>Date: ${new Date(order.createdAt).toLocaleString()}</p>
-        <p>Total: ₹${order.totalAmount}</p>
-        <p>Items: ${order.items.map(i => `${i.quantity}x ${i.name}`).join(', ')}</p>
+      <div class="te-order-body">
+        <p><span class="te-meta-label">Date:</span> ${new Date(order.createdAt).toLocaleString()}</p>
+        <p><span class="te-meta-label">Total:</span> ₹${order.totalAmount}</p>
+        <p><span class="te-meta-label">Items:</span> ${order.items.map(i => `${i.quantity}x ${i.name}`).join(', ')}</p>
         <p><strong>Expected Delivery:</strong> ${deliveryDateText}</p>
         ${actualDeliveryText ? `<p><strong>Actual Delivery:</strong> ${actualDeliveryText}</p>` : ''}
         ${(order.status === 'Delivered' || order.status === 'Delayed Delivery') && !order.feedback ?
-        `<button onclick="openFeedbackModal('${order._id}')" class="btn-primary" style="margin-top: 10px; padding: 5px 10px; font-size: 0.9rem;">Rate Order</button>` :
-        order.feedback ? `<p style="color: var(--color-primary); margin-top: 5px;"><strong>Rated:</strong> ${order.feedback.rating}/5 ★</p>` : ''}
+        `<button onclick="openFeedbackModal('${order._id}')" class="btn-primary te-rate-btn">Rate Order</button>` :
+        order.feedback ? `<p class="te-rated"><strong>Rated:</strong> ${order.feedback.rating}/5 ★</p>` : ''}
       </div>
     </div>
       `;

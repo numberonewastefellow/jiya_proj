@@ -68,6 +68,10 @@ const userSchema = new mongoose.Schema({
     blockedUntil: {
         type: Date
     },
+    lastUnblockedAt: {
+        type: Date,
+        default: null
+    },
     deviceFingerprint: {
         type: String,
         trim: true

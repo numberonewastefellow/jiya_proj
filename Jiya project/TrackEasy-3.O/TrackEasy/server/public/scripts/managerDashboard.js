@@ -563,7 +563,11 @@ async function loadBlockedUsersData() {
           <td>${blockedAt ? blockedAt.toLocaleString() : '—'}</td>
           <td>${untilCell}</td>
           <td>
-            <button onclick="unblockUserFromList('${u._id}')" style="background:#16a34a; color:#fff; border:none; padding:0.4rem 0.85rem; border-radius:4px; cursor:pointer; font-size:0.85rem;">Unblock</button>
+            <div style="display:flex; gap:0.4rem; flex-wrap:wrap;">
+              <button onclick="viewBlockedDetail('${u._id}', '${(u.username || '').replace(/'/g, "\\'")}')"
+                      style="background:#3b82f6; color:#fff; border:none; padding:0.4rem 0.7rem; border-radius:4px; cursor:pointer; font-size:0.82rem;">View Details</button>
+              <button onclick="unblockUserFromList('${u._id}')" style="background:#16a34a; color:#fff; border:none; padding:0.4rem 0.85rem; border-radius:4px; cursor:pointer; font-size:0.85rem;">Unblock</button>
+            </div>
           </td>
         </tr>
       `;
@@ -583,9 +587,210 @@ async function unblockUserFromList(userId) {
   }
 }
 
+// =========================================================================
+// BLOCK DETAIL VIEW — replays the saved decision trace, Playground-style.
+// =========================================================================
+function escapeHtmlBD(str) {
+  return String(str == null ? '' : str).replace(/[&<>"]/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch]));
+}
+
+function closeBlockDetail() {
+  const overlay = document.getElementById('block-detail-overlay');
+  if (overlay) overlay.style.display = 'none';
+}
+
+async function viewBlockedDetail(userId, username) {
+  const overlay = document.getElementById('block-detail-overlay');
+  const body = document.getElementById('bd-body');
+  const title = document.getElementById('bd-title');
+  if (!overlay || !body) return;
+  overlay.style.display = 'block';
+  if (title) title.textContent = `Block decision trace — ${username || userId}`;
+  body.innerHTML = '<div style="text-align:center; padding:2rem; color:#6b7280;">Loading decision trace…</div>';
+  try {
+    const data = await get(`/manager/blocked-detail/${userId}`);
+    body.innerHTML = renderBlockDetail(data);
+  } catch (err) {
+    body.innerHTML = `<div style="color:#dc2626; padding:1rem;">Failed to load details: ${err.message || 'unknown error'}</div>`;
+  }
+}
+
+function renderBlockDetail(data) {
+  if (!data || !data.user) return '<div style="color:#dc2626;">No data.</div>';
+  const u = data.user;
+  const a = data.alert;
+  const trace = a && a.decisionTrace;
+
+  const blockedAt = u.blockedAt ? new Date(u.blockedAt).toLocaleString() : '—';
+  const blockedUntil = u.blockedUntil ? new Date(u.blockedUntil) : null;
+  const now = Date.now();
+  const remainSec = blockedUntil ? Math.max(0, Math.ceil((blockedUntil.getTime() - now) / 1000)) : null;
+  const cooldownStr = !blockedUntil ? '— (manual / permanent)' :
+    (remainSec <= 0 ? 'expired (auto-clears on next request)' : `${remainSec}s remaining (until ${blockedUntil.toLocaleTimeString()})`);
+  const reason = u.blockReason || (a && a.violationReason) || '—';
+
+  let header = `
+    <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(220px, 1fr)); gap:1rem; padding:1rem; background:#f9fafb; border-radius:8px; margin-bottom:1.25rem;">
+      <div><div style="font-size:0.75rem; color:#6b7280;">User</div><div style="font-weight:600;">${escapeHtmlBD(u.username || '')}</div><div style="font-size:0.82rem; color:#6b7280;">${escapeHtmlBD(u.email || '')}</div></div>
+      <div><div style="font-size:0.75rem; color:#6b7280;">Risk Score</div><div style="font-size:1.5rem; font-weight:700; color:${a && a.riskScore > 8 ? '#dc2626' : a && a.riskScore > 6 ? '#d97706' : '#16a34a'};">${a ? a.riskScore : '—'} <span style="font-size:0.85rem; color:#6b7280;">/ 10</span></div></div>
+      <div><div style="font-size:0.75rem; color:#6b7280;">Blocked At</div><div style="font-weight:500;">${blockedAt}</div></div>
+      <div><div style="font-size:0.75rem; color:#6b7280;">Auto-Unblock</div><div style="font-weight:500;">${cooldownStr}</div></div>
+      <div style="grid-column: span 2;"><div style="font-size:0.75rem; color:#6b7280;">Reason</div><div style="font-weight:500; word-break:break-word;">${escapeHtmlBD(reason)}</div></div>
+    </div>
+  `;
+
+  if (!trace) {
+    return header + `
+      <div style="padding:1rem; background:#fef9c3; border-radius:8px; color:#713f12;">
+        <strong>No decision trace stored for this block.</strong>
+        <div style="margin-top:0.5rem; font-size:0.9rem;">
+          This usually means: (a) the block predates the decision-trace feature, (b) the user was blocked manually, or (c) the original alert errored before the trace could be saved.
+        </div>
+      </div>
+    `;
+  }
+
+  let flow = '<div style="display:flex; flex-direction:column; gap:0.4rem;">';
+  (trace.flow || []).forEach((step, idx) => {
+    const isFinal = step.kind === 'final';
+    const isAggregate = step.kind === 'aggregate';
+    const isStart = step.kind === 'start';
+    const fired = !!step.fired;
+    const colour = isFinal ? (step.detail === 'block' ? '#dc2626' : step.detail === 'allow' ? '#16a34a' : '#d97706') :
+                   isAggregate ? '#0f172a' :
+                   isStart ? '#3b82f6' :
+                   fired ? '#dc2626' : '#9ca3af';
+    const bg = fired || isFinal || isAggregate || isStart ? colour + '18' : '#fff';
+    const icon = isStart ? '▶' : isFinal ? '⏹' : isAggregate ? '∑' : (fired ? '●' : '○');
+    flow += `
+      <div style="display:flex; align-items:flex-start; gap:0.7rem;">
+        <div style="display:flex; flex-direction:column; align-items:center; min-width:24px;">
+          <div style="width:24px; height:24px; border-radius:50%; background:${colour}; color:#fff; display:flex; align-items:center; justify-content:center; font-weight:700; font-size:0.75rem;">${icon}</div>
+          ${idx < trace.flow.length - 1 ? `<div style="width:2px; flex:1; min-height:14px; background:${colour};"></div>` : ''}
+        </div>
+        <div style="flex:1; padding:0.55rem 0.85rem; background:${bg}; border-left:3px solid ${colour}; border-radius:5px; margin-bottom:0.2rem;">
+          <div style="font-weight:${fired || isFinal || isAggregate ? '600' : '400'}; color:${fired || isFinal || isAggregate ? '#0f172a' : '#6b7280'}; font-size:0.92rem;">${escapeHtmlBD(step.label)}</div>
+          <div style="font-size:0.78rem; color:${fired || isFinal ? colour : '#6b7280'}; margin-top:1px; font-family:monospace;">${escapeHtmlBD(step.detail || '')}</div>
+        </div>
+      </div>
+    `;
+  });
+  flow += '</div>';
+
+  const ag = trace.aggregate || {};
+  const action = ag.action || 'unknown';
+  const colour = action === 'block' ? '#dc2626' : action === 'requires_otp' ? '#d97706' : action === 'warning' ? '#ca8a04' : '#16a34a';
+  const icon = action === 'block' ? '🚫' : action === 'requires_otp' ? '⚠️' : action === 'warning' ? '⚠' : '✅';
+  const aggHtml = `
+    <div style="border:2px solid ${colour}; border-radius:10px; padding:1rem 1.25rem; background:${colour}10; margin-bottom:1.25rem;">
+      <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.5rem;">
+        <div style="font-size:1.1rem; font-weight:700; color:${colour};">${icon} Action: ${String(action).toUpperCase()}</div>
+        <div style="font-family:monospace; font-size:0.95rem;">Risk score (capped 0-10): <strong>${ag.riskScore != null ? ag.riskScore : '—'}</strong> &nbsp;|&nbsp; raw sum: ${ag.rawSum != null ? ag.rawSum : '—'}</div>
+      </div>
+      ${(ag.reasons || []).length ? `
+        <div style="margin-top:0.7rem;">
+          <div style="font-weight:600; margin-bottom:0.2rem;">Reasons:</div>
+          <ul style="margin:0 0 0 1.25rem; padding:0;">
+            ${ag.reasons.map(r => `<li style="margin:2px 0;">${escapeHtmlBD(r)}</li>`).join('')}
+          </ul>
+        </div>` : ''}
+    </div>
+  `;
+
+  const rulesHtml = (trace.rules || []).map(r => {
+    const fired = r.fired;
+    const border = fired ? '#dc2626' : '#d1d5db';
+    const bg = fired ? '#fef2f2' : '#fff';
+    const badge = fired
+      ? `<span style="background:#dc2626; color:#fff; padding:2px 8px; border-radius:99px; font-size:0.7rem; font-weight:600; white-space:nowrap;">FIRED${r.points ? ' +' + r.points : ''}</span>`
+      : `<span style="background:#e5e7eb; color:#6b7280; padding:2px 8px; border-radius:99px; font-size:0.7rem; font-weight:500;">no</span>`;
+    return `
+      <div style="border:1px solid ${border}; border-radius:8px; padding:0.75rem; background:${bg}; font-size:0.85rem; min-width:0; overflow:hidden;">
+        <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:0.5rem; margin-bottom:0.4rem;">
+          <strong style="word-break:break-word; line-height:1.3;">[${r.id}] ${escapeHtmlBD(r.name)}</strong>
+          ${badge}
+        </div>
+        <div style="color:#6b7280; font-size:0.78rem; margin-bottom:0.3rem;">${escapeHtmlBD(r.origin || '')}</div>
+        <pre style="font-family:monospace; background:#f3f4f6; padding:0.45rem 0.55rem; border-radius:4px; font-size:0.78rem; margin:0 0 0.4rem 0; white-space:pre-wrap; word-break:break-word; overflow-wrap:anywhere;">${escapeHtmlBD(r.formula || '')}</pre>
+        <pre style="font-family:monospace; font-size:0.76rem; margin:0; padding:0.4rem 0.5rem; background:#fafafa; border:1px solid #e5e7eb; border-radius:4px; white-space:pre-wrap; word-break:break-word; overflow-wrap:anywhere;">${escapeHtmlBD(JSON.stringify(r.inputs, null, 2))}</pre>
+      </div>
+    `;
+  }).join('');
+
+  const modelsHtml = (trace.models || []).map(m => {
+    const fired = m.fired;
+    const border = fired ? '#dc2626' : '#3b82f6';
+    const bg = fired ? '#fef2f2' : '#eff6ff';
+    let badge = `<span style="background:#3b82f6; color:#fff; padding:2px 8px; border-radius:99px; font-size:0.72rem; font-weight:600;">CALLED</span>`;
+    if (fired) badge = `<span style="background:#dc2626; color:#fff; padding:2px 8px; border-radius:99px; font-size:0.72rem; font-weight:600;">FIRED${m.points ? ' +' + m.points : ''}</span>`;
+    const stepsHtml = (m.transformation || []).map(s => `<div style="margin:3px 0; padding-left:0.4rem; border-left:2px solid #cbd5e1;">${escapeHtmlBD(s)}</div>`).join('');
+    return `
+      <div style="border:1px solid ${border}; border-left:4px solid ${border}; border-radius:8px; padding:1rem; background:${bg};">
+        <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.5rem; margin-bottom:0.6rem;">
+          <div>
+            <strong style="font-size:1rem;">[${m.id}] ${escapeHtmlBD(m.name)}</strong>
+            ${m.points ? `<span style="margin-left:0.5rem; color:#6b7280; font-size:0.82rem;">contributes +${m.points} when fired</span>` : ''}
+          </div>
+          ${badge}
+        </div>
+        <div style="font-family:monospace; font-size:0.8rem; color:#475569; margin-bottom:0.5rem;">${escapeHtmlBD(m.endpoint || '')}</div>
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:1rem; margin-top:0.5rem;">
+          <div>
+            <div style="font-weight:600; margin-bottom:0.3rem; font-size:0.85rem;">Transformation</div>
+            <div style="font-size:0.77rem; line-height:1.45;">${stepsHtml || '<em>None</em>'}</div>
+          </div>
+          <div>
+            <div style="font-weight:600; margin-bottom:0.3rem; font-size:0.85rem;">Model returned</div>
+            <pre style="background:#0f172a; color:#86efac; padding:0.6rem; border-radius:5px; font-size:0.75rem; margin:0; max-height:200px; overflow:auto; white-space:pre-wrap; word-break:break-word; overflow-wrap:anywhere;">${escapeHtmlBD(JSON.stringify(m.output || null, null, 2))}</pre>
+            ${m.threshold != null ? `<div style="margin-top:0.4rem; font-size:0.78rem; color:#6b7280;">Fires when output > <strong>${m.threshold}</strong></div>` : ''}
+          </div>
+        </div>
+        ${m.note ? `<div style="margin-top:0.6rem; padding:0.4rem 0.6rem; background:#fef9c3; border-radius:4px; font-size:0.78rem; color:#713f12;">📝 ${escapeHtmlBD(m.note)}</div>` : ''}
+      </div>
+    `;
+  }).join('');
+
+  let shapHtml = '<em style="color:#6b7280; font-size:0.85rem;">No XAI explanation stored.</em>';
+  const expl = (ag && ag.explanation) || (a && a.explanation);
+  if (Array.isArray(expl) && expl.length) {
+    const sorted = expl.slice().sort((x, y) => Math.abs(y.contribution) - Math.abs(x.contribution));
+    const maxMag = Math.max.apply(null, sorted.map(e => Math.abs(e.contribution)).concat(0.01));
+    shapHtml = sorted.map(item => {
+      const positive = item.contribution >= 0;
+      const widthPct = Math.min(100, (Math.abs(item.contribution) / maxMag) * 100);
+      return `
+        <div style="display:grid; grid-template-columns:120px 1fr 80px; gap:10px; align-items:center; margin:6px 0; font-size:0.9rem;">
+          <span style="font-family:monospace;">${escapeHtmlBD(item.feature)}</span>
+          <div style="background:#e5e7eb; height:14px; border-radius:3px; overflow:hidden;">
+            <div style="background:${positive ? '#dc2626' : '#16a34a'}; width:${widthPct}%; height:100%;"></div>
+          </div>
+          <span style="text-align:right; font-family:monospace;">${positive ? '+' : ''}${Number(item.contribution).toFixed(2)}</span>
+        </div>
+      `;
+    }).join('');
+  }
+
+  return `
+    ${header}
+    ${aggHtml}
+    <h4 style="margin:1.2rem 0 0.6rem 0; font-size:1rem;">Decision flow (top → bottom)</h4>
+    ${flow}
+    <h4 style="margin:1.5rem 0 0.6rem 0; font-size:1rem;">Rule layer (deterministic)</h4>
+    <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(320px, 1fr)); gap:0.75rem;">${rulesHtml}</div>
+    <h4 style="margin:1.5rem 0 0.6rem 0; font-size:1rem;">ML models</h4>
+    <div style="display:flex; flex-direction:column; gap:1rem;">${modelsHtml}</div>
+    <h4 style="margin:1.5rem 0 0.6rem 0; font-size:1rem;">Master brain — feature contributions (SHAP-style)</h4>
+    <div style="background:#f9fafb; padding:1rem; border-radius:8px;">${shapHtml}</div>
+    <h4 style="margin:1.5rem 0 0.6rem 0; font-size:1rem;">Captured order &amp; context</h4>
+    <pre style="background:#0f172a; color:#e2e8f0; padding:1rem; border-radius:8px; font-size:0.82rem; overflow:auto; white-space:pre-wrap; word-break:break-word; overflow-wrap:anywhere;">${escapeHtmlBD(JSON.stringify({ simulatedOrder: trace.simulatedOrder, context: trace.context, evaluatedAt: trace.evaluatedAt }, null, 2))}</pre>
+  `;
+}
+
 if (typeof window !== 'undefined') {
   window.loadBlockedUsersData = loadBlockedUsersData;
   window.unblockUserFromList = unblockUserFromList;
+  window.viewBlockedDetail = viewBlockedDetail;
+  window.closeBlockDetail = closeBlockDetail;
 }
 
 async function loadFeedbackData() {
@@ -850,11 +1055,37 @@ async function showUserDetails(userId) {
       <div style="margin-bottom: 1rem;">
         <strong style="color: #333;">Risk Score:</strong>
         <span style="font-weight: bold; padding: 2px 10px; border-radius: 999px; font-size: 0.9rem; margin-left: 0.5rem;
-          background: ${details.riskScore >= 7 ? '#fee2e2' : details.riskScore >= 4 ? '#fef3c7' : '#dcfce7'}; 
+          background: ${details.riskScore >= 7 ? '#fee2e2' : details.riskScore >= 4 ? '#fef3c7' : '#dcfce7'};
           color: ${details.riskScore >= 7 ? '#dc2626' : details.riskScore >= 4 ? '#d97706' : '#16a34a'};">
           ${details.riskScore || 0}
         </span>
       </div>
+      ${(() => {
+        const reasonsRaw = details.violationReason && details.violationReason !== 'No anomalies detected' ? details.violationReason : null;
+        if (!reasonsRaw) return '';
+        const reasons = String(reasonsRaw).split('|').map(s => s.trim()).filter(Boolean);
+        const headerColour = (details.riskScore || 0) > 8 ? '#dc2626' : (details.riskScore || 0) > 6 ? '#d97706' : '#ca8a04';
+        const blockBanner = details.isBlocked ? `
+          <div style="margin-bottom:0.75rem; padding:0.55rem 0.75rem; background:#fee2e2; border-left:4px solid #dc2626; border-radius:4px; font-size:0.82rem; color:#7f1d1d;">
+            🚫 <strong>Account blocked</strong> ${details.blockedUntil ? '— auto-unblock at ' + new Date(details.blockedUntil).toLocaleString() : '(manual block)'}
+          </div>` : '';
+        const viewTraceBtn = details.isBlocked ? `
+          <div style="margin-top:0.7rem;">
+            <button onclick="viewBlockedDetail('${details._id}', '${(details.username || '').replace(/'/g, "\\'")}');"
+                    style="background:#3b82f6; color:#fff; border:none; padding:0.45rem 0.9rem; border-radius:5px; cursor:pointer; font-size:0.82rem;">
+              View full decision trace →
+            </button>
+          </div>` : '';
+        return `
+        <div style="margin-bottom: 1rem; background:#fef2f2; padding:1rem; border-radius:8px; border:1px solid #fecaca;">
+          <h5 style="margin:0 0 0.5rem 0; font-size:0.85rem; color:${headerColour}; text-transform:uppercase; letter-spacing:0.025em;">Why was this user flagged?</h5>
+          ${blockBanner}
+          <ul style="margin:0; padding:0 0 0 1.1rem; color:#0f172a; font-size:0.88rem; line-height:1.55;">
+            ${reasons.map(r => `<li style="margin:2px 0;">${String(r).replace(/[<>&]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c]))}</li>`).join('')}
+          </ul>
+          ${viewTraceBtn}
+        </div>`;
+      })()}
       <div style="margin-bottom: 1rem;">
         <strong style="color: #333;">Date of Joining:</strong>
         <span style="color: #666; margin-left: 0.5rem;">${joinDate}</span>

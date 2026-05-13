@@ -3,7 +3,6 @@ const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
 const geoip = require('geoip-lite');
-const { execSync } = require('child_process');
 const path = require('path');
 const axios = require('axios');
 
@@ -114,9 +113,16 @@ app.post('/api/fraud/log-event', async (req, res) => {
 app.post('/api/fraud/evaluate-transaction', async (req, res) => {
     try {
         const { userId, transactionDetails } = req.body;
-        
+
+        // Reputation cutoff: admin / manager / auto-unblock sets user.lastUnblockedAt.
+        // Rules that look at "recent events" must ignore everything before this stamp,
+        // otherwise an unblocked user is immediately re-blocked on their next checkout
+        // by the same EventLog rows that caused the original block.
+        const userForCutoff = await User.findById(userId).select('lastUnblockedAt').lean();
+        const eventCutoff = userForCutoff?.lastUnblockedAt || new Date(0);
+
         // Fetch recent events for the user to analyze behavior
-        const recentEvents = await EventLog.find({ userId })
+        const recentEvents = await EventLog.find({ userId, timestamp: { $gte: eventCutoff } })
             .sort({ timestamp: -1 })
             .limit(20); // Look at last 20 events
 
@@ -126,7 +132,20 @@ app.post('/api/fraud/evaluate-transaction', async (req, res) => {
         let geoSpeed = 0;
         let clusterSize = 1;
         let xaiExplanation = null;
-        
+
+        // Tracing scaffolding — every rule/model decision pushes here so the
+        // admin Blocked Users page can replay why this evaluation blocked.
+        const traceRules = [];
+        const traceModels = [];
+        let traceLstmProb = 0;
+        let traceGnnProb = 0;
+        let traceAutoMSE = 0;
+        let traceBrainProb = 0;
+        let traceR3Gap = null;
+        let traceR4Avg = null;
+        let traceR5Distance = null;
+        let traceR5SpeedKmh = null;
+
         // Rule 1: High frequency of add_to_cart (bot-like browsing)
         const addToCartEvents = recentEvents.filter(e => e.eventType === 'add_to_cart');
         if (addToCartEvents.length > 5) {
@@ -144,10 +163,13 @@ app.post('/api/fraud/evaluate-transaction', async (req, res) => {
 
         // Rule 3: Speed Check: checkout way too fast after login
         const loginEvent = recentEvents.find(e => e.eventType === 'login');
-        if (loginEvent && (new Date() - new Date(loginEvent.timestamp)) < 15000) {
-            // Under 15 seconds from login to checkout
-            riskScore += 3;
-            violationReasons.push("Unusually fast checkout process");
+        if (loginEvent) {
+            traceR3Gap = (new Date() - new Date(loginEvent.timestamp)) / 1000;
+            if (traceR3Gap < 15) {
+                // Under 15 seconds from login to checkout
+                riskScore += 3;
+                violationReasons.push("Unusually fast checkout process");
+            }
         }
 
         // Rule 4: Historical Order Quantity Anomaly (Suspension Rule)
@@ -159,7 +181,8 @@ app.post('/api/fraud/evaluate-transaction', async (req, res) => {
                 // Calculate average items per order
                 const totalPastItems = pastOrders.reduce((sum, order) => sum + (order.items?.length || 0), 0);
                 const avgItemsPerOrder = totalPastItems / pastOrders.length;
-                
+                traceR4Avg = avgItemsPerOrder;
+
                 // If they are adding 3x more products than their average (and at least 5 products total to prevent false positives on tiny accounts)
                 if (transactionDetails.items.length > (avgItemsPerOrder * 3) && transactionDetails.items.length >= 5) {
                     riskScore += 7; // Massive score to guarantee block
@@ -190,10 +213,12 @@ app.post('/api/fraud/evaluate-transaction', async (req, res) => {
                 
                 if (timeDiffHours > 0) {
                     const speedKmh = distanceKm / timeDiffHours;
-                    
+
                     // Threshold: 1000 km/h (Commercial flight speed)
                     // We only check if distance is significant (e.g., > 10km) to avoid jitter/IP change noise
                     geoSpeed = speedKmh;
+                    traceR5SpeedKmh = speedKmh;
+                    traceR5Distance = distanceKm;
                     if (speedKmh > 1000 && distanceKm > 50) {
                         riskScore += 8;
                         violationReasons.push(`Geospatial Anomaly: Travelled ${Math.round(distanceKm)}km at ${Math.round(speedKmh)}km/h (Impossible Speed)`);
@@ -227,6 +252,7 @@ app.post('/api/fraud/evaluate-transaction', async (req, res) => {
                     sequence: sequenceIds.split(',').map(Number) 
                 });
                 const result = response.data;
+                traceLstmProb = result.probability || 0;
 
                 if (result.probability > 0.85) { // Updated to High Confidence threshold
                     riskScore += 5;
@@ -242,6 +268,7 @@ app.post('/api/fraud/evaluate-transaction', async (req, res) => {
         try {
             const response = await axios.post(`${ML_SERVICE_URL}/predict/ring`, { userId });
             const gnnResult = response.data;
+            traceGnnProb = gnnResult.probability || 0;
 
             if (gnnResult.probability > 0.85) { // High Confidence
                 riskScore += 6;
@@ -265,6 +292,7 @@ app.post('/api/fraud/evaluate-transaction', async (req, res) => {
                     transaction: { amount, items, hour, day } 
                 });
                 const autoResult = autoResponse.data;
+                traceAutoMSE = autoResult.mse || 0;
 
                 if (autoResult.is_anomaly) {
                     riskScore += 4;
@@ -339,8 +367,9 @@ app.post('/api/fraud/evaluate-transaction', async (req, res) => {
 
                     if (brainResult.probability) {
                         const brainProb = brainResult.probability;
+                        traceBrainProb = brainProb;
                         console.log(`[MASTER BRAIN] Final Ensemble Fraud Probability: ${Math.round(brainProb * 100)}%`);
-                        
+
                         if (brainProb > 0.9) { // Very High Confidence for Master Brain
                             action = 'requires_otp';
                             violationReasons.push(`ANN Master Brain: Extremely high risk ensemble detection (${Math.round(brainProb * 100)}%)`);
@@ -379,6 +408,151 @@ app.post('/api/fraud/evaluate-transaction', async (req, res) => {
             action = 'warning';
         }
 
+        // -----------------------------------------------------------------
+        // Build the structured decision trace from values captured above.
+        // Mirrors the shape used by /api/fraud/inference-debug so the admin
+        // Blocked Users details panel can render identical UI.
+        // -----------------------------------------------------------------
+        try {
+            const itemCountArr = Array.isArray(transactionDetails && transactionDetails.items) ? transactionDetails.items : [];
+            const totalItems = itemCountArr.length;
+            const totalAmt = (transactionDetails && (transactionDetails.totalAmount || transactionDetails.totalSum)) || 0;
+            const r4Avg = traceR4Avg == null ? null : +traceR4Avg.toFixed(2);
+            const r4Threshold = traceR4Avg == null ? null : +(traceR4Avg * 3).toFixed(2);
+
+            traceRules.push({
+                id: 'R1', name: 'High-frequency cart additions', origin: 'fraud-service',
+                formula: 'if (addToCartEvents > 5) score += addToCartEvents × 1',
+                inputs: { addToCartEvents: addToCartEvents.length },
+                fired: addToCartEvents.length > 5,
+                points: addToCartEvents.length > 5 ? addToCartEvents.length : 0
+            });
+            traceRules.push({
+                id: 'R2', name: 'Multiple payment failures', origin: 'fraud-service',
+                formula: 'if (failedPaymentEvents ≥ 2) score += 4',
+                inputs: { failedPayments: failedPayments.length },
+                fired: failedPayments.length >= 2,
+                points: failedPayments.length >= 2 ? 4 : 0
+            });
+            traceRules.push({
+                id: 'R3', name: 'Fast checkout after login', origin: 'fraud-service',
+                formula: 'if (now - lastLogin < 15s) score += 3',
+                inputs: { secondsSinceLogin: traceR3Gap === null ? 'no recent login' : +traceR3Gap.toFixed(1) },
+                fired: traceR3Gap !== null && traceR3Gap < 15,
+                points: (traceR3Gap !== null && traceR3Gap < 15) ? 3 : 0
+            });
+            traceRules.push({
+                id: 'R4', name: 'Historical quantity anomaly', origin: 'fraud-service',
+                formula: 'if (items > avgItems × 3 AND items ≥ 5) score += 7',
+                inputs: { itemsInCart: totalItems, avgItemsPerOrder: r4Avg, threshold: r4Threshold },
+                fired: r4Avg != null && totalItems > (r4Avg * 3) && totalItems >= 5,
+                points: (r4Avg != null && totalItems > (r4Avg * 3) && totalItems >= 5) ? 7 : 0
+            });
+            traceRules.push({
+                id: 'R5', name: 'Geospatial "Superman" check', origin: 'fraud-service',
+                formula: 'if (speed > 1000 km/h AND distance > 50 km) score += 8',
+                inputs: {
+                    distanceKm: traceR5Distance == null ? null : +traceR5Distance.toFixed(2),
+                    speedKmh: traceR5SpeedKmh == null ? null : +traceR5SpeedKmh.toFixed(2)
+                },
+                fired: traceR5SpeedKmh != null && traceR5SpeedKmh > 1000 && traceR5Distance > 50,
+                points: (traceR5SpeedKmh != null && traceR5SpeedKmh > 1000 && traceR5Distance > 50) ? 8 : 0
+            });
+
+            traceModels.push({
+                id: 'LSTM', name: 'Deep Learning — Behavioural sequence', endpoint: 'POST /predict/behavioral',
+                threshold: 0.85, points: 5,
+                fired: traceLstmProb > 0.85,
+                output: { probability: traceLstmProb },
+                transformation: [
+                    'Last 10 events from EventLog → integer sequence',
+                    'Pad/truncate to length 10, reshape (1,10,1)',
+                    'LSTM(64) → Dropout → Dense(32) → sigmoid'
+                ]
+            });
+            traceModels.push({
+                id: 'GNN', name: 'Graph Neural Network — fraud ring', endpoint: 'POST /predict/ring',
+                threshold: 0.85, points: 6,
+                fired: traceGnnProb > 0.85,
+                output: { probability: traceGnnProb },
+                transformation: [
+                    'userId → node_map.json index',
+                    'Returns 0 if user not in graph',
+                    'GCN(adj, features) → sigmoid'
+                ]
+            });
+            traceModels.push({
+                id: 'AE', name: 'Autoencoder — unsupervised anomaly', endpoint: 'POST /predict/anomaly',
+                threshold: 2.5, points: 4,
+                fired: traceAutoMSE > 2.5,
+                output: { mse: traceAutoMSE, is_anomaly: traceAutoMSE > 2.5 },
+                transformation: [
+                    'Build [amount, items, hour, day] vector',
+                    'StandardScaler.transform',
+                    'autoencoder.predict → MSE = mean((scaled - reconstructed)²)',
+                    'is_anomaly = MSE > 2.5'
+                ]
+            });
+            traceModels.push({
+                id: 'ANN', name: 'ANN Master Brain (ensemble)', endpoint: 'POST /predict/master',
+                threshold: 0.9, points: null,
+                fired: traceBrainProb > 0.9,
+                output: { probability: traceBrainProb },
+                note: 'Master brain influences action mapping but does not directly add to riskScore.',
+                transformation: [
+                    `Build 6-D feature vector [ruleScore, lstmProb, gnnProb, autoMSE, geoSpeed, clusterSize]`,
+                    `→ [${riskScore}, ${traceLstmProb.toFixed(4)}, ${traceGnnProb.toFixed(4)}, ${traceAutoMSE.toFixed(2)}, ${(geoSpeed || 0).toFixed(2)}, ${clusterSize}]`,
+                    'Dense(16,relu) → Dropout → Dense(8,relu) → sigmoid',
+                    'If probability > 0.9 → action escalates to requires_otp'
+                ]
+            });
+
+            const cappedScore = Math.min(10, riskScore);
+            const flowSteps = [
+                { label: 'Order received', detail: `userId=${userId}`, fired: true, kind: 'start' },
+                ...traceRules.map(r => ({
+                    label: `[${r.id}] ${r.name}`,
+                    detail: r.fired ? `FIRED → +${r.points || 0}` : 'not fired',
+                    fired: r.fired,
+                    kind: 'rule'
+                })),
+                ...traceModels.map(m => ({
+                    label: `[${m.id}] ${m.name}`,
+                    detail: m.fired ? `FIRED${m.points ? ' → +' + m.points : ' (escalate)'}` : 'not fired',
+                    fired: m.fired,
+                    kind: 'model'
+                })),
+                { label: `Risk score = ${cappedScore} / 10`, detail: cappedScore > 8 ? 'block path' : cappedScore > 6 ? 'OTP path' : cappedScore > 3 ? 'warning path' : 'allow path', fired: true, kind: 'aggregate' },
+                { label: `Final action: ${String(action).toUpperCase()}`, detail: action === 'block' ? 'user auto-blocked + cooldown started' : action, fired: action !== 'allow', kind: 'final' }
+            ];
+
+            var __decisionTrace = {
+                rules: traceRules,
+                models: traceModels,
+                aggregate: {
+                    riskScore: cappedScore,
+                    rawSum: riskScore,
+                    action,
+                    reasons: violationReasons.slice(),
+                    explanation: xaiExplanation || null
+                },
+                flow: flowSteps,
+                simulatedOrder: {
+                    items: (transactionDetails && transactionDetails.items) || [],
+                    totalAmount: (transactionDetails && (transactionDetails.totalAmount || transactionDetails.totalSum)) || 0,
+                    paymentMethod: (transactionDetails && transactionDetails.paymentMethod) || 'unknown'
+                },
+                context: {
+                    recentEventCount: recentEvents.length,
+                    recentEventTypes: recentEvents.map(e => e.eventType)
+                },
+                evaluatedAt: new Date()
+            };
+        } catch (traceError) {
+            console.error('[TRACE BUILD ERROR]', traceError.message);
+            var __decisionTrace = null;
+        }
+
         // ALWAYS save/log the fraud alert so the manager can see the risk score
         const alert = new FraudAlert({
             userId,
@@ -386,7 +560,9 @@ app.post('/api/fraud/evaluate-transaction', async (req, res) => {
             riskScore,
             violationReason: violationReasons.length > 0 ? violationReasons.join(' | ') : 'No anomalies detected',
             status: riskScore > 6 ? 'Pending' : 'Resolved', // Auto-resolve low-risk scores
-            explanation: xaiExplanation // Store local feature attribution (SHAP-like data)
+            explanation: xaiExplanation, // Store local feature attribution (SHAP-like data)
+            decisionTrace: __decisionTrace,
+            action
         });
         await alert.save();
 
@@ -410,7 +586,7 @@ app.post('/api/fraud/inference-debug', async (req, res) => {
         if (!customerId) return res.status(400).json({ error: 'customerId required' });
 
         const Order = require('../server/models/Order');
-        const customer = await User.findById(customerId).select('username email role');
+        const customer = await User.findById(customerId).select('username email role lastUnblockedAt');
         if (!customer) return res.status(404).json({ error: 'Customer not found' });
 
         const EVENT_MAP = {
@@ -422,7 +598,10 @@ app.post('/api/fraud/inference-debug', async (req, res) => {
         const totalAmount = Number(simulatedOrder.totalAmount) || 0;
         const paymentMethod = simulatedOrder.paymentMethod || 'COD';
 
-        const recentEvents = await EventLog.find({ userId: customerId })
+        // Same reputation cutoff as /evaluate-transaction so inference-debug
+        // replays match what the live evaluator would see.
+        const eventCutoff = customer.lastUnblockedAt || new Date(0);
+        const recentEvents = await EventLog.find({ userId: customerId, timestamp: { $gte: eventCutoff } })
             .sort({ timestamp: -1 })
             .limit(20)
             .lean();
@@ -551,7 +730,7 @@ app.post('/api/fraud/inference-debug', async (req, res) => {
         const eventTypeArr = recent10.map(e => e.eventType);
         const sequenceIds = recent10.map(e => EVENT_MAP[e.eventType] || 0).reverse();
         const lstmTransformation = [
-            `Step 1: EventLog.find({ userId }).sort({ timestamp: -1 }).limit(20)  →  ${recentEvents.length} events`,
+            `Step 1: EventLog.find({ userId, timestamp >= ${customer.lastUnblockedAt ? new Date(customer.lastUnblockedAt).toISOString() : 'epoch'} }).sort({ timestamp: -1 }).limit(20)  →  ${recentEvents.length} events`,
             `Step 2: take .slice(0, 10)  →  ${recent10.length} events`,
             `Step 3: map eventType → integer using EVENT_MAP {login=1, add_to_cart=2, remove_from_cart=3, checkout_attempt=4, payment_failed=5, payment_success=6}`,
             `Step 4: eventTypes  =  ${JSON.stringify(eventTypeArr)}`,
@@ -871,6 +1050,54 @@ app.post('/api/fraud/bulk-block', async (req, res) => {
         await User.updateMany({ _id: { $in: userIds } }, { isBlocked: true });
         res.status(200).json({ message: `${userIds.length} users blocked successfully` });
     } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// ====================================================================
+// Block Detail — drives the admin/manager Blocked Users details panel.
+// Returns the most recent FraudAlert that produced action='block' (or
+// the most recent alert if none flipped to block, e.g. manual blocks)
+// along with its full decisionTrace.
+// ====================================================================
+app.get('/api/fraud/block-detail/:userId', async (req, res) => {
+    try {
+        const { userId } = req.params;
+        if (!userId) return res.status(400).json({ error: 'userId required' });
+
+        const user = await User.findById(userId).select('username email role isBlocked blockReason blockedAt blockedUntil');
+        if (!user) return res.status(404).json({ error: 'User not found' });
+
+        // Prefer the most recent alert that produced a block action; fall
+        // back to the most recent alert overall (covers manual blocks and
+        // legacy alerts written before decisionTrace existed).
+        let alert = await FraudAlert.findOne({ userId, action: 'block' }).sort({ createdAt: -1 }).lean();
+        if (!alert) alert = await FraudAlert.findOne({ userId }).sort({ createdAt: -1 }).lean();
+
+        res.json({
+            user: {
+                _id: user._id,
+                username: user.username,
+                email: user.email,
+                role: user.role,
+                isBlocked: user.isBlocked,
+                blockReason: user.blockReason,
+                blockedAt: user.blockedAt,
+                blockedUntil: user.blockedUntil
+            },
+            alert: alert ? {
+                _id: alert._id,
+                riskScore: alert.riskScore,
+                action: alert.action,
+                violationReason: alert.violationReason,
+                explanation: alert.explanation,
+                decisionTrace: alert.decisionTrace,
+                status: alert.status,
+                createdAt: alert.createdAt
+            } : null
+        });
+    } catch (error) {
+        console.error('Block detail error:', error);
         res.status(500).json({ error: error.message });
     }
 });

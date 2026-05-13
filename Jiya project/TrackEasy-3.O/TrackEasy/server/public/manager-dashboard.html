@@ -1,7 +1,8 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="light">
 
 <head>
+  <script>(function(){try{var v=localStorage.getItem("trackeasy_theme_version");if(v!=="v2"){localStorage.setItem("theme","light");localStorage.setItem("trackeasy_theme_version","v2");}var t=localStorage.getItem("theme")||"light";document.documentElement.setAttribute("data-theme",t);}catch(e){document.documentElement.setAttribute("data-theme","light");}})();</script>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>TrackEasy Manager Dashboard</title>
@@ -407,6 +408,7 @@
           </div>
           <p style="margin:0 0 1rem 0; color:#6b7280; font-size:0.9rem;">
             Auto-blocks from the fraud detection system have a configured cooldown and self-release. Manual blocks stay until unblocked here.
+            Click <strong>View Details</strong> on any row to replay the saved decision trace for that user.
           </p>
           <table class="orders-table" id="blocked-users-table">
             <thead>
@@ -423,6 +425,19 @@
             <tbody id="blocked-users-tbody"></tbody>
           </table>
         </section>
+
+        <!-- Block-detail modal -->
+        <div id="block-detail-overlay"
+             style="display:none; position:fixed; inset:0; background:rgba(15,23,42,0.55); z-index:9999; padding:2rem; overflow:auto;"
+             onclick="if(event.target===this) closeBlockDetail();">
+          <div style="max-width:1200px; margin:0 auto; background:#fff; border-radius:10px; box-shadow:0 25px 50px -12px rgba(0,0,0,0.4);">
+            <div style="display:flex; justify-content:space-between; align-items:center; padding:1.1rem 1.5rem; border-bottom:1px solid #e5e7eb; position:sticky; top:0; background:#fff; border-radius:10px 10px 0 0; z-index:1;">
+              <h3 id="bd-title" style="margin:0; font-size:1.1rem;">Block decision trace</h3>
+              <button onclick="closeBlockDetail()" style="background:#e5e7eb; border:none; padding:0.45rem 0.9rem; border-radius:6px; cursor:pointer;">Close ✕</button>
+            </div>
+            <div id="bd-body" style="padding:1.5rem;">Loading…</div>
+          </div>
+        </div>
       </div>
 
       <!-- FEEDBACK VIEW -->
@@ -523,7 +538,7 @@
     </main>
   </div>
   <script src="/scripts/dashboardCommon.js"></script>
-  <script type="module" src="/scripts/managerDashboard.js"></script>
+  <script type="module" src="/scripts/managerDashboard.js?v=3"></script>
 </body>
 
 </html>

@@ -108,6 +108,10 @@ router.post('/login', async (req, res) => {
             user.blockReason = null;
             user.failedOTPAttempts = 0;
             user.failedLoginAttempts = 0;
+            // Reset reputation so the auto-cooldown expiry doesn't immediately re-block
+            // on the next checkout via stale EventLog evidence / Maniacal-Speed baseline.
+            user.lastUnblockedAt = new Date();
+            user.lastCheckoutDuration = null;
             await user.save();
             console.log(`[AUTO-UNBLOCK] Cooldown expired for user ${user._id} at login`);
         }

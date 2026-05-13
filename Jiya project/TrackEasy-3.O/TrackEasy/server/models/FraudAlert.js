@@ -24,6 +24,12 @@ const fraudAlertSchema = new mongoose.Schema({
     },
     explanation: {
         type: mongoose.Schema.Types.Mixed // Stores SHAP-like feature contributions
+    },
+    decisionTrace: {
+        type: mongoose.Schema.Types.Mixed // Full per-rule + per-model breakdown captured at evaluation time (drives Blocked Users details panel)
+    },
+    action: {
+        type: String // 'allow' | 'warning' | 'requires_otp' | 'block'
     }
 }, {
     timestamps: true

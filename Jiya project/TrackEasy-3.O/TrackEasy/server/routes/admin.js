@@ -113,6 +113,22 @@ router.post('/inference-playground', authMiddleware, async (req, res) => {
 });
 
 // ===============================
+// BLOCKED USER DETAILS (decision trace)
+// ===============================
+router.get('/blocked-detail/:userId', authMiddleware, async (req, res) => {
+    if (req.userRole !== 'admin') return res.status(403).json({ message: 'Access denied' });
+    try {
+        const fraudUrl = process.env.FRAUD_SERVICE_URL || 'http://localhost:5002';
+        const response = await fetch(`${fraudUrl}/api/fraud/block-detail/${encodeURIComponent(req.params.userId)}`);
+        const data = await response.json();
+        res.status(response.status).json(data);
+    } catch (err) {
+        console.error('Block detail proxy error:', err);
+        res.status(500).json({ message: 'Block detail proxy failed', error: err.message });
+    }
+});
+
+// ===============================
 // USER MANAGEMENT ENDPOINTS
 // ===============================
 const User = require('../models/User');
@@ -176,6 +192,10 @@ router.put('/users/:id/toggle-block', authMiddleware, async (req, res) => {
             user.blockedUntil = null;
             user.failedOTPAttempts = 0;
             user.failedLoginAttempts = 0;
+            // Reset reputation: stamp cutoff so old EventLog rows are ignored,
+            // and wipe Maniacal-Speed baseline so a fast next checkout doesn't auto-block.
+            user.lastUnblockedAt = new Date();
+            user.lastCheckoutDuration = null;
         }
         await user.save();
 
@@ -305,6 +325,11 @@ router.get('/users/:id/details', authMiddleware, async (req, res) => {
         const latestAlert = await FraudAlert.findOne({ userId: user._id }).sort({ createdAt: -1 });
         details.riskScore = latestAlert ? latestAlert.riskScore : 0;
         details.explanation = latestAlert ? latestAlert.explanation : null;
+        details.violationReason = latestAlert ? latestAlert.violationReason : null;
+        details.action = latestAlert ? latestAlert.action : null;
+        details.blockReason = user.blockReason || null;
+        details.blockedAt = user.blockedAt || null;
+        details.blockedUntil = user.blockedUntil || null;
 
         res.json(details);
     } catch (error) {
