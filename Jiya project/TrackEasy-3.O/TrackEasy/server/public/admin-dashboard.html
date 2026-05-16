@@ -80,6 +80,10 @@
       display: none;
     }
 
+    .te-chart-wrap {
+      position: relative;
+    }
+
     /* Notification Bell Styles */
     .notification-container { position: absolute; top: 1rem; right: 2rem; cursor: pointer; z-index: 1001; }
     .bell-icon { width: 24px; height: 24px; fill: #4b5563; transition: transform 0.2s; }
@@ -192,11 +196,15 @@
         <div class="charts-row">
           <div class="card" style="background:#fff; padding:1rem; border-radius:8px; box-shadow:0 1px 3px rgba(0,0,0,0.05);">
             <h3 style="margin:0 0 0.5rem 0;">Fraud-rate 7-day trend</h3>
-            <canvas id="chart-d1-trend" height="180"></canvas>
+            <div style="position:relative; height:220px;">
+              <canvas id="chart-d1-trend"></canvas>
+            </div>
           </div>
           <div class="card" style="background:#fff; padding:1rem; border-radius:8px; box-shadow:0 1px 3px rgba(0,0,0,0.05);">
             <h3 style="margin:0 0 0.5rem 0;">Action mix (last 30 days)</h3>
-            <canvas id="chart-d1-actionmix" height="180"></canvas>
+            <div style="position:relative; height:240px;">
+              <canvas id="chart-d1-actionmix"></canvas>
+            </div>
           </div>
         </div>
 
@@ -338,23 +346,31 @@
           <div class="charts-row">
             <div class="card" style="background:#fff; padding:1rem; border-radius:8px; box-shadow:0 1px 3px rgba(0,0,0,0.05);">
               <h3 style="margin:0 0 0.5rem 0;">Rule firing rate</h3>
-              <canvas id="chart-d2-rules" height="220"></canvas>
+              <div class="te-chart-wrap" style="height:260px;">
+                <canvas id="chart-d2-rules"></canvas>
+              </div>
             </div>
             <div class="card" style="background:#fff; padding:1rem; border-radius:8px; box-shadow:0 1px 3px rgba(0,0,0,0.05);">
               <h3 style="margin:0 0 0.5rem 0;">Model firing rate</h3>
-              <canvas id="chart-d2-models" height="220"></canvas>
+              <div class="te-chart-wrap" style="height:260px;">
+                <canvas id="chart-d2-models"></canvas>
+              </div>
             </div>
           </div>
 
           <div class="card" style="margin-top:16px; background:#fff; padding:1rem; border-radius:8px; box-shadow:0 1px 3px rgba(0,0,0,0.05);">
             <h3 style="margin:0 0 0.25rem 0;">RuleScore vs Brain probability</h3>
             <p class="muted" style="margin-top:0">Each point is one alert. X = sum of rule points (0–10). Y = ANN ensemble probability (0–1). Color = final action.</p>
-            <canvas id="chart-d2-scatter" height="260"></canvas>
+            <div class="te-chart-wrap" style="height:320px;">
+              <canvas id="chart-d2-scatter"></canvas>
+            </div>
           </div>
 
           <div class="card" style="margin-top:16px; background:#fff; padding:1rem; border-radius:8px; box-shadow:0 1px 3px rgba(0,0,0,0.05);">
             <h3 style="margin:0 0 0.5rem 0;">Actions by day</h3>
-            <canvas id="chart-d2-actionbyday" height="220"></canvas>
+            <div class="te-chart-wrap" style="height:260px;">
+              <canvas id="chart-d2-actionbyday"></canvas>
+            </div>
           </div>
         </section>
       </div>
@@ -380,11 +396,15 @@
           <div class="charts-row" style="margin-top:16px">
             <div class="card">
               <h3>Top risky cities</h3>
-              <canvas id="chart-d3-cities" height="220"></canvas>
+              <div class="te-chart-wrap" style="height:260px;">
+                <canvas id="chart-d3-cities"></canvas>
+              </div>
             </div>
             <div class="card">
               <h3>Time-of-day heatmap (7×24)</h3>
-              <canvas id="chart-d3-tod" height="220"></canvas>
+              <div class="te-chart-wrap" style="height:260px;">
+                <canvas id="chart-d3-tod"></canvas>
+              </div>
             </div>
           </div>
 
@@ -416,6 +436,18 @@
               <label class="ring-slider">
                 Min risk: <input type="range" id="d4-min-risk" min="0" max="10" step="1" value="0">
                 <span id="d4-min-risk-value">0</span>
+              </label>
+              <label class="ring-edge-toggle">
+                <input type="checkbox" id="d4-edge-phone" data-edge="phone" checked>
+                <span class="edge-swatch" style="background:#8b5cf6"></span> Phone
+              </label>
+              <label class="ring-edge-toggle">
+                <input type="checkbox" id="d4-edge-address" data-edge="address" checked>
+                <span class="edge-swatch" style="background:#06b6d4"></span> Address
+              </label>
+              <label class="ring-edge-toggle">
+                <input type="checkbox" id="d4-edge-device" data-edge="device" checked>
+                <span class="edge-swatch" style="background:#ec4899"></span> Device
               </label>
               <span class="muted" id="d4-stats">— components</span>
               <button class="btn btn-outline" id="d4-refresh">Refresh</button>
@@ -701,7 +733,7 @@
     });
   </script>
   <script src="/scripts/dashboardCommon.js"></script>
-  <script type="module" src="/scripts/adminDashboard.js?v=13"></script>
+  <script type="module" src="/scripts/adminDashboard.js?v=14"></script>
 </body>
 
 </html>

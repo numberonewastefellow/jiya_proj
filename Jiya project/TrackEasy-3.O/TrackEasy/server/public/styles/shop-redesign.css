@@ -1157,3 +1157,22 @@ html[data-theme="dark"] .te-passkey-status { color: #6ee7b7; }
 .risk-badge.med { background: #fef3c7; color: #92400e; }
 .risk-badge.high { background: #fee2e2; color: #991b1b; }
 #d3-map .leaflet-popup-content { font-size: 12px; }
+
+.ring-edge-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: #475569;
+  cursor: pointer;
+  margin: 0 8px;
+}
+.ring-edge-toggle .edge-swatch {
+  display: inline-block;
+  width: 14px;
+  height: 4px;
+  border-radius: 2px;
+}
+.ring-edge-toggle input[type="checkbox"] {
+  margin: 0;
+}

@@ -35,6 +35,7 @@ let d4MinRisk = 0;
 let d4RefreshTimer = null;
 let d4CytoscapeLoaded = false;
 let d4Wired = false;
+const d4EdgeFilters = { phone: true, address: true, device: true };
 
 export async function initAdminDashboard() {
   const ordersTableEl = document.getElementById('orders-table');
@@ -456,9 +457,44 @@ function renderD2Scatter(points) {
     pointHoverRadius: 6
   }));
 
+  const quadrantPlugin = {
+    id: 'd2Quadrants',
+    beforeDatasetsDraw(chart) {
+      const { ctx, chartArea: a, scales: { x, y } } = chart;
+      if (!a || !x || !y) return;
+      const midX = x.getPixelForValue(5);   // ruleScore midpoint (0..10)
+      const midY = y.getPixelForValue(0.5); // brainProb midpoint (0..1)
+      ctx.save();
+      // bottom-left: low rules, low brain — quiet
+      ctx.fillStyle = 'rgba(148,163,184,0.06)';
+      ctx.fillRect(a.left, midY, midX - a.left, a.bottom - midY);
+      // bottom-right: high rules, low brain — rules over-trigger
+      ctx.fillStyle = 'rgba(202,138,4,0.08)';
+      ctx.fillRect(midX, midY, a.right - midX, a.bottom - midY);
+      // top-left: low rules, high brain — brain over-trigger
+      ctx.fillStyle = 'rgba(217,119,6,0.08)';
+      ctx.fillRect(a.left, a.top, midX - a.left, midY - a.top);
+      // top-right: high rules, high brain — agree (block zone)
+      ctx.fillStyle = 'rgba(220,38,38,0.08)';
+      ctx.fillRect(midX, a.top, a.right - midX, midY - a.top);
+      // labels
+      ctx.fillStyle = '#94a3b8';
+      ctx.font = '11px sans-serif';
+      ctx.textAlign = 'right';
+      ctx.fillText('quiet',                midX - 6, a.bottom - 6);
+      ctx.fillText('rules over-trigger →', a.right - 6, a.bottom - 6);
+      ctx.textAlign = 'left';
+      ctx.fillText('← brain over-trigger', a.left + 6, a.top + 14);
+      ctx.textAlign = 'right';
+      ctx.fillText('agree (block zone)',   a.right - 6, a.top + 14);
+      ctx.restore();
+    }
+  };
+
   d2Charts.scatter = new Chart(ctx, {
     type: 'scatter',
     data: { datasets },
+    plugins: [quadrantPlugin],
     options: {
       responsive: true,
       maintainAspectRatio: false,
@@ -1054,6 +1090,9 @@ async function loadFraudRing(minRisk) {
         idealEdgeLength: () => 80
       }).run();
     }
+
+    // Re-apply edge-type toggle state (purple/cyan/pink) after rebuild.
+    applyD4EdgeFilters();
   } catch (e) {
     console.error('loadFraudRing error:', e);
   }
@@ -1117,6 +1156,13 @@ function stopD4AutoRefresh() {
   // Keep d4Cy alive to avoid re-layout cost; just clear elements next entry.
 }
 
+function applyD4EdgeFilters() {
+  if (!d4Cy) return;
+  Object.entries(d4EdgeFilters).forEach(([kind, visible]) => {
+    d4Cy.edges(`[sharedVia = "${kind}"]`).style('display', visible ? 'element' : 'none');
+  });
+}
+
 function setupD4Controls() {
   if (d4Wired) return;
   const slider = document.getElementById('d4-min-risk');
@@ -1133,6 +1179,14 @@ function setupD4Controls() {
       loadFraudRing(d4MinRisk);
     });
   }
+  ['phone', 'address', 'device'].forEach(kind => {
+    const cb = document.getElementById(`d4-edge-${kind}`);
+    if (!cb) return;
+    cb.addEventListener('change', () => {
+      d4EdgeFilters[kind] = cb.checked;
+      applyD4EdgeFilters();
+    });
+  });
   if (refreshBtn) {
     refreshBtn.addEventListener('click', () => loadFraudRing(d4MinRisk));
   }
