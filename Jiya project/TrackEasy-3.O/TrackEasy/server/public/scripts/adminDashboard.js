@@ -421,8 +421,8 @@ function renderFilteredOrders(filter) {
 // ===============================
 function setupNavigation() {
   console.log('Initializing Admin Navigation...');
-  const navIds = ['nav-dashboard', 'nav-orders', 'nav-analytics', 'nav-users', 'nav-blocked', 'nav-playground', 'nav-feedback', 'nav-account'];
-  const viewIds = ['view-dashboard', 'view-orders', 'view-analytics', 'view-users', 'view-blocked', 'view-playground', 'view-feedback', 'view-account'];
+  const navIds = ['nav-dashboard', 'nav-orders', 'nav-analytics', 'nav-users', 'nav-blocked', 'nav-playground', 'nav-feedback', 'nav-demo-data', 'nav-account'];
+  const viewIds = ['view-dashboard', 'view-orders', 'view-analytics', 'view-users', 'view-blocked', 'view-playground', 'view-feedback', 'view-demo-data', 'view-account'];
 
   navIds.forEach(id => {
     const el = document.getElementById(id);
@@ -475,7 +475,68 @@ function setupNavigation() {
       if (typeof initInferencePlayground === 'function') initInferencePlayground();
     } else if (viewName === 'feedback') {
       if (typeof loadFeedbackData === 'function') loadFeedbackData();
+    } else if (viewName === 'demo-data') {
+      setupSeedButtons();
     }
+  }
+}
+
+let seedButtonsWired = false;
+function setupSeedButtons() {
+  if (seedButtonsWired) return;
+  seedButtonsWired = true;
+  const out = document.getElementById('seed-output');
+  const writeOutput = (obj) => {
+    if (!out) return;
+    out.style.display = 'block';
+    out.textContent = typeof obj === 'string' ? obj : JSON.stringify(obj, null, 2);
+  };
+
+  const seedBtn = document.getElementById('btn-seed-run');
+  if (seedBtn) {
+    seedBtn.addEventListener('click', async () => {
+      seedBtn.disabled = true;
+      const original = seedBtn.textContent;
+      seedBtn.textContent = 'Seeding…';
+      writeOutput('Running POST /api/admin/seed …');
+      try {
+        const result = await post('/admin/seed', {});
+        writeOutput(result);
+        if (typeof showToast === 'function') showToast('Reseed complete', result.message || 'Done');
+      } catch (err) {
+        writeOutput({ error: String(err) });
+      } finally {
+        seedBtn.disabled = false;
+        seedBtn.textContent = original;
+      }
+    });
+  }
+
+  const resetBtn = document.getElementById('btn-seed-reset');
+  if (resetBtn) {
+    resetBtn.addEventListener('click', async () => {
+      const ok = window.confirm(
+        'This wipes ALL users, products, orders, fraud alerts, and EventLog rows, then re-seeds from CSVs.\n\nYou will be logged out. Continue?'
+      );
+      if (!ok) return;
+      resetBtn.disabled = true;
+      const original = resetBtn.textContent;
+      resetBtn.textContent = 'Resetting…';
+      writeOutput('Running POST /api/admin/seed/reset …');
+      try {
+        const result = await post('/admin/seed/reset', {});
+        writeOutput(result);
+        // Forcibly drop client-side auth; the admin row was wiped & recreated, so the JWT is invalid.
+        localStorage.removeItem('authToken');
+        localStorage.removeItem('user');
+        if (typeof showToast === 'function') showToast('Demo data reset', 'Logging you out — sign back in as admin@trackeasy.com / password123');
+        setTimeout(() => { window.location.href = '/login.html'; }, 1800);
+      } catch (err) {
+        writeOutput({ error: String(err) });
+        resetBtn.disabled = false;
+        resetBtn.textContent = original;
+      }
+    });
   }
 }
 

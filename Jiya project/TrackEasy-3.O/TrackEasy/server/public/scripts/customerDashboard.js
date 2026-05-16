@@ -49,9 +49,151 @@ export async function initCustomerDashboard() {
   window.registerPasskey = registerPasskey;
   window.verifyWithFingerprint = verifyWithFingerprint;
   window.verifyWithPasskey = verifyWithPasskey;
+  // Geo simulator picker — exposed for the cart "Shopping from" card
+  window.teGeoApplyPreset = teGeoApplyPreset;
+  window.teGeoApplyManual = teGeoApplyManual;
+  window.teGeoApplyPin = teGeoApplyPin;
+  window.teGeoReset = teGeoReset;
+  window.teGeoToggleAdvanced = teGeoToggleAdvanced;
+  window.teGeoTogglePin = teGeoTogglePin;
 
   initOTPForm();
+  initGeoPicker();
   handlePaymentReturn();
+}
+
+// =============================================================================
+// GEO SIMULATOR PICKER  ("Shopping from" card on the cart page)
+// =============================================================================
+// All synthetic geo selection lives in localStorage under 'simulatedLocation'.
+// When nothing is picked the server falls back to the real IP→GeoIP path.
+// The picker is purely additive — every helper is null-safe so it can run on
+// any page (the picker DOM only exists on the cart view).
+// =============================================================================
+const TE_GEO_KEY = 'simulatedLocation';
+const TE_GEO_PRESETS = [
+  { id: 'mumbai',    label: 'Mumbai, India',     flag: '🇮🇳', lat: 19.0760,  lon: 72.8777,  city: 'Mumbai',     country: 'IN' },
+  { id: 'delhi',     label: 'Delhi, India',      flag: '🇮🇳', lat: 28.6139,  lon: 77.2090,  city: 'Delhi',      country: 'IN' },
+  { id: 'newyork',   label: 'New York, USA',     flag: '🗽', lat: 40.7128,  lon: -74.0060, city: 'New York',   country: 'US' },
+  { id: 'london',    label: 'London, UK',        flag: '🇬🇧', lat: 51.5074,  lon: -0.1278,  city: 'London',     country: 'GB' },
+  { id: 'tokyo',     label: 'Tokyo, Japan',      flag: '🗾', lat: 35.6762,  lon: 139.6503, city: 'Tokyo',      country: 'JP' },
+  { id: 'sydney',    label: 'Sydney, Australia', flag: '🦘', lat: -33.8688, lon: 151.2093, city: 'Sydney',     country: 'AU' },
+  { id: 'saopaulo',  label: 'São Paulo, Brazil', flag: '🇧🇷', lat: -23.5505, lon: -46.6333, city: 'São Paulo',  country: 'BR' },
+  { id: 'capetown',  label: 'Cape Town, S.Africa', flag: '🇿🇦', lat: -33.9249, lon: 18.4241, city: 'Cape Town', country: 'ZA' },
+  { id: 'dubai',     label: 'Dubai, UAE',        flag: '🇦🇪', lat: 25.2048,  lon: 55.2708,  city: 'Dubai',      country: 'AE' },
+  { id: 'singapore', label: 'Singapore',         flag: '🇸🇬', lat: 1.3521,   lon: 103.8198, city: 'Singapore',  country: 'SG' }
+];
+// Compact built-in Indian PIN → city lat/lon map for the demo. ~30 entries.
+const TE_GEO_PIN_MAP = {
+  '400001': { city: 'Mumbai',     lat: 18.9388,  lon: 72.8354 },
+  '110001': { city: 'New Delhi',  lat: 28.6263,  lon: 77.2231 },
+  '560001': { city: 'Bangalore',  lat: 12.9784,  lon: 77.5994 },
+  '600001': { city: 'Chennai',    lat: 13.0823,  lon: 80.2755 },
+  '700001': { city: 'Kolkata',    lat: 22.5615,  lon: 88.3470 },
+  '500001': { city: 'Hyderabad',  lat: 17.3833,  lon: 78.4737 },
+  '380001': { city: 'Ahmedabad',  lat: 23.0258,  lon: 72.5873 },
+  '411001': { city: 'Pune',       lat: 18.5159,  lon: 73.8516 },
+  '302001': { city: 'Jaipur',     lat: 26.9162,  lon: 75.8208 },
+  '226001': { city: 'Lucknow',    lat: 26.8467,  lon: 80.9462 },
+  '482001': { city: 'Jabalpur',   lat: 23.1815,  lon: 79.9864 },
+  '160001': { city: 'Chandigarh', lat: 30.7333,  lon: 76.7794 },
+  '462001': { city: 'Bhopal',     lat: 23.2599,  lon: 77.4126 },
+  '440001': { city: 'Nagpur',     lat: 21.1458,  lon: 79.0882 },
+  '682001': { city: 'Kochi',      lat: 9.9312,   lon: 76.2673 },
+  '781001': { city: 'Guwahati',   lat: 26.1445,  lon: 91.7362 },
+  '751001': { city: 'Bhubaneswar',lat: 20.2961,  lon: 85.8245 },
+  '800001': { city: 'Patna',      lat: 25.5941,  lon: 85.1376 },
+  '530001': { city: 'Visakhapatnam', lat: 17.6868, lon: 83.2185 },
+  '395001': { city: 'Surat',      lat: 21.1702,  lon: 72.8311 }
+};
+
+function getSimulatedLocation() {
+  try {
+    const raw = localStorage.getItem(TE_GEO_KEY);
+    if (!raw) return null;
+    const obj = JSON.parse(raw);
+    if (!Number.isFinite(Number(obj.lat)) || !Number.isFinite(Number(obj.lon))) return null;
+    return obj;
+  } catch (e) { return null; }
+}
+
+function setSimulatedLocation(loc) {
+  if (!loc) {
+    localStorage.removeItem(TE_GEO_KEY);
+  } else {
+    localStorage.setItem(TE_GEO_KEY, JSON.stringify(loc));
+  }
+  refreshGeoPickerStatus();
+}
+
+function refreshGeoPickerStatus() {
+  const cur = getSimulatedLocation();
+  const chip = document.getElementById('te-geo-status');
+  const resetBtn = document.getElementById('te-geo-reset');
+  if (!chip) return;
+  if (cur) {
+    chip.innerHTML = `<strong>📍 Ordering from:</strong> ${cur.city}${cur.country ? ', ' + cur.country : ''} <small>(${cur.lat.toFixed(4)}, ${cur.lon.toFixed(4)})</small>`;
+    chip.classList.add('te-geo-status--active');
+    if (resetBtn) resetBtn.style.display = 'inline-flex';
+  } else {
+    chip.innerHTML = `<strong>📍 Ordering from:</strong> Real location (IP based)`;
+    chip.classList.remove('te-geo-status--active');
+    if (resetBtn) resetBtn.style.display = 'none';
+  }
+}
+
+function initGeoPicker() {
+  // Populate the preset <select> options if the picker is on the page.
+  const sel = document.getElementById('te-geo-preset-select');
+  if (sel && sel.options.length <= 1) {
+    TE_GEO_PRESETS.forEach(p => {
+      const opt = document.createElement('option');
+      opt.value = p.id;
+      opt.textContent = `${p.flag}  ${p.label}`;
+      sel.appendChild(opt);
+    });
+  }
+  refreshGeoPickerStatus();
+}
+
+function teGeoApplyPreset() {
+  const sel = document.getElementById('te-geo-preset-select');
+  const id = sel && sel.value;
+  const preset = TE_GEO_PRESETS.find(p => p.id === id);
+  if (!preset) return;
+  setSimulatedLocation({
+    lat: preset.lat,
+    lon: preset.lon,
+    city: preset.city,
+    country: preset.country,
+    source: 'preset:' + preset.id
+  });
+}
+
+function teGeoApplyManual() {
+  const lat = parseFloat(document.getElementById('te-geo-lat').value);
+  const lon = parseFloat(document.getElementById('te-geo-lon').value);
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) return alert('Enter valid numeric lat/lon');
+  if (Math.abs(lat) > 90 || Math.abs(lon) > 180) return alert('Lat must be -90..90, lon must be -180..180');
+  setSimulatedLocation({ lat, lon, city: 'Manual', country: 'XX', source: 'manual' });
+}
+
+function teGeoApplyPin() {
+  const pin = (document.getElementById('te-geo-pin').value || '').trim();
+  const hit = TE_GEO_PIN_MAP[pin];
+  if (!hit) return alert(`PIN ${pin} is not in the demo lookup. Try one of: ${Object.keys(TE_GEO_PIN_MAP).slice(0,5).join(', ')}…  or use Advanced lat/lon.`);
+  setSimulatedLocation({ lat: hit.lat, lon: hit.lon, city: hit.city, country: 'IN', source: 'pin:' + pin });
+}
+
+function teGeoReset() { setSimulatedLocation(null); }
+
+function teGeoToggleAdvanced() {
+  const el = document.getElementById('te-geo-advanced');
+  if (el) el.classList.toggle('te-collapsed');
+}
+function teGeoTogglePin() {
+  const el = document.getElementById('te-geo-pin-row');
+  if (el) el.classList.toggle('te-collapsed');
 }
 
 function setupNavigation() {
@@ -128,6 +270,8 @@ function setupNavigation() {
       document.body.classList.add('te-cart-mode');
       // Re-render the cart so the count + summary fields are fresh.
       try { renderCart(); } catch (_) { /* renderCart is hoisted at module scope */ }
+      // Refresh the geo-simulator chip in case localStorage changed elsewhere.
+      try { initGeoPicker(); } catch (_) {}
     } else if (view === 'orders') {
       navOrders.classList.add('active');
       viewOrders.classList.remove('hidden');
@@ -445,12 +589,13 @@ async function handlePayment() {
     const honeypot = document.getElementById('order-confirm-bypass')?.value || "";
     const biometricsData = window.biometrics ? window.biometrics.getMetrics() : null;
     
-    const response = await post('/orders', { 
-      items: cart, 
-      totalAmount, 
+    const response = await post('/orders', {
+      items: cart,
+      totalAmount,
       paymentMethod: method,
       biometrics: biometricsData,
-      hp_trap: honeypot.length > 0 // will be true if a bot filled it
+      hp_trap: honeypot.length > 0, // will be true if a bot filled it
+      simulatedLocation: getSimulatedLocation() // demo picker; null when "Real location"
     });
 
     if (response.requiresOTP) {
@@ -1118,11 +1263,12 @@ async function handlePaymentReturn() {
       const bioData = savedBiometrics ? JSON.parse(savedBiometrics) : null;
 
       // Official order placement call (now with Biometrics!)
-      const response = await post('/orders', { 
-        items: cartToPlace, 
-        totalAmount, 
+      const response = await post('/orders', {
+        items: cartToPlace,
+        totalAmount,
         paymentMethod: method,
-        biometrics: bioData
+        biometrics: bioData,
+        simulatedLocation: getSimulatedLocation()
       });
 
       if (response.success || response.order) {

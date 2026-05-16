@@ -55,6 +55,26 @@ function calculateDistance(lat1, lon1, lat2, lon2) {
  * Resolves an IP address to geographic coordinates.
  * Includes a mock for local development IPs.
  */
+/**
+ * Validate a simulatedLocation object posted from the client demo picker.
+ * Returns a normalised {lat, lon, city, country, source} or null if invalid.
+ * Purely opt-in; never trusted as a security signal.
+ */
+function normaliseSimulatedLocation(sim) {
+    if (!sim || typeof sim !== 'object') return null;
+    const lat = Number(sim.lat);
+    const lon = Number(sim.lon);
+    if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
+    if (Math.abs(lat) > 90 || Math.abs(lon) > 180) return null;
+    return {
+        lat,
+        lon,
+        city: typeof sim.city === 'string' ? sim.city.slice(0, 64) : 'Simulated',
+        country: typeof sim.country === 'string' ? sim.country.slice(0, 8) : 'XX',
+        source: typeof sim.source === 'string' ? sim.source.slice(0, 32) : 'simulated'
+    };
+}
+
 function resolveGeoIP(ip) {
     // Handle localhost/mock cases for demonstration
     // In production, we would use the real IP.
@@ -146,12 +166,17 @@ app.post('/api/fraud/evaluate-transaction', async (req, res) => {
         let traceR5Distance = null;
         let traceR5SpeedKmh = null;
 
+        // Track which "hard" behavioural rules fired so the geo-override can
+        // tell whether R5 was the only meaningful signal.
+        let hardRuleFired = false;
+
         // Rule 1: High frequency of add_to_cart (bot-like browsing)
         const addToCartEvents = recentEvents.filter(e => e.eventType === 'add_to_cart');
         if (addToCartEvents.length > 5) {
             // Give 1 risk point for EVERY item they rapidly added to the cart
             riskScore += (addToCartEvents.length * 1);
             violationReasons.push(`High frequency cart additions (${addToCartEvents.length} items)`);
+            hardRuleFired = true;
         }
 
         // Rule 2: Multiple payment failures
@@ -159,6 +184,7 @@ app.post('/api/fraud/evaluate-transaction', async (req, res) => {
         if (failedPayments.length >= 2) {
             riskScore += 4;
             violationReasons.push("Multiple failed payment attempts");
+            hardRuleFired = true;
         }
 
         // Rule 3: Speed Check: checkout way too fast after login
@@ -169,6 +195,7 @@ app.post('/api/fraud/evaluate-transaction', async (req, res) => {
                 // Under 15 seconds from login to checkout
                 riskScore += 3;
                 violationReasons.push("Unusually fast checkout process");
+                hardRuleFired = true;
             }
         }
 
@@ -176,7 +203,7 @@ app.post('/api/fraud/evaluate-transaction', async (req, res) => {
         if (transactionDetails && transactionDetails.items && transactionDetails.items.length > 0) {
             const Order = require('../server/models/Order');
             const pastOrders = await Order.find({ customer: userId, status: { $ne: 'Rejected' } });
-            
+
             if (pastOrders.length > 0) {
                 // Calculate average items per order
                 const totalPastItems = pastOrders.reduce((sum, order) => sum + (order.items?.length || 0), 0);
@@ -187,20 +214,24 @@ app.post('/api/fraud/evaluate-transaction', async (req, res) => {
                 if (transactionDetails.items.length > (avgItemsPerOrder * 3) && transactionDetails.items.length >= 5) {
                     riskScore += 7; // Massive score to guarantee block
                     violationReasons.push(`Abnormal quantity anomaly. Past Avg: ${Math.round(avgItemsPerOrder)}, Current Cart: ${transactionDetails.items.length}`);
-                    
+                    hardRuleFired = true;
                     console.log(`[USER FLAGGED] ${userId} exceeded historical item average. OTP required.`);
                 }
             }
         }
 
         // Rule 5: Geospatial Anomaly ("Superman" Check)
+        // simulatedLocation (from the cart-page demo picker) overrides IP-based geo
+        // when present; otherwise we fall back to the real IP→GeoIP resolution.
         const currentIp = req.body.ipAddress || req.ip;
-        const currentLocation = resolveGeoIP(currentIp);
-        
+        const simulatedLocation = normaliseSimulatedLocation(req.body.simulatedLocation);
+        const currentLocation = simulatedLocation || resolveGeoIP(currentIp);
+        let r5Fired = false; // tracked so the geo-override can downgrade block→OTP later
+
         if (currentLocation && recentEvents.length > 0) {
             // Find the most recent event with a valid location
             const lastEventWithLocation = recentEvents.find(e => e.location && e.location.lat);
-            
+
             if (lastEventWithLocation) {
                 const distanceKm = calculateDistance(
                     lastEventWithLocation.location.lat,
@@ -208,9 +239,9 @@ app.post('/api/fraud/evaluate-transaction', async (req, res) => {
                     currentLocation.lat,
                     currentLocation.lon
                 );
-                
+
                 const timeDiffHours = (new Date() - new Date(lastEventWithLocation.timestamp)) / (1000 * 60 * 60);
-                
+
                 if (timeDiffHours > 0) {
                     const speedKmh = distanceKm / timeDiffHours;
 
@@ -221,8 +252,12 @@ app.post('/api/fraud/evaluate-transaction', async (req, res) => {
                     traceR5Distance = distanceKm;
                     if (speedKmh > 1000 && distanceKm > 50) {
                         riskScore += 8;
-                        violationReasons.push(`Geospatial Anomaly: Travelled ${Math.round(distanceKm)}km at ${Math.round(speedKmh)}km/h (Impossible Speed)`);
-                        console.log(`[SUPERMAN ALERT] User ${userId} flagged for impossible travel speed: ${Math.round(speedKmh)}km/h`);
+                        r5Fired = true;
+                        const fromCity = (lastEventWithLocation.location.city || 'previous location').replace(/ \(Mock\)$/, '');
+                        const toCity = currentLocation.city || 'unknown location';
+                        const toCountry = currentLocation.country ? `, ${currentLocation.country}` : '';
+                        violationReasons.push(`Order placed from a new location — ${toCity}${toCountry} (≈${Math.round(distanceKm)} km from your usual area: ${fromCity})`);
+                        console.log(`[GEO ANOMALY] User ${userId} flagged — new location ${toCity} (${Math.round(speedKmh)}km/h, ${Math.round(distanceKm)}km from ${fromCity})`);
                     }
                 }
             }
@@ -338,6 +373,7 @@ app.post('/api/fraud/evaluate-transaction', async (req, res) => {
                             riskScore += 10;
                             action = 'block';
                             violationReasons.push(`Maniacal Speed: Current checkout (${Math.round(currentDuration/1000)}s) is 3x faster than typical pattern (${Math.round(previousDuration/1000)}s). Bot-like execution suspected.`);
+                            hardRuleFired = true;
                         }
                     }
                     
@@ -386,6 +422,19 @@ app.post('/api/fraud/evaluate-transaction', async (req, res) => {
 
         // Cap the risk score at 10
         riskScore = Math.min(10, riskScore);
+
+        // --- GEO OVERRIDE ----------------------------------------------------
+        // If R5 (geo anomaly) is the only "hard" rule that fired, never escalate
+        // beyond requires_otp — soft signals like the autoencoder or ANN master
+        // brain alone shouldn't auto-block a user just because they shipped from
+        // a new city. They should still verify via OTP.
+        // --------------------------------------------------------------------
+        if (r5Fired && !hardRuleFired) {
+            if (riskScore > 8) {
+                console.log(`[GEO OVERRIDE] R5 was the only hard rule — downgrading block→requires_otp (was score ${riskScore})`);
+                riskScore = Math.min(riskScore, 8); // cap so the action branch below resolves to requires_otp (> 6, ≤ 8)
+            }
+        }
 
         if (riskScore > 8) {
             action = 'block';
@@ -544,7 +593,9 @@ app.post('/api/fraud/evaluate-transaction', async (req, res) => {
                 },
                 context: {
                     recentEventCount: recentEvents.length,
-                    recentEventTypes: recentEvents.map(e => e.eventType)
+                    recentEventTypes: recentEvents.map(e => e.eventType),
+                    currentLocation,
+                    simulatedLocation: simulatedLocation || null
                 },
                 evaluatedAt: new Date()
             };
@@ -715,14 +766,48 @@ app.post('/api/fraud/inference-debug', async (req, res) => {
             points: r4Pts
         });
 
+        // R5 — Superman check. If the caller passes simulatedLocation we can
+        // compute the real distance/speed against the user's last event with a
+        // known location. Without simulatedLocation we keep the original stub
+        // behaviour (no current-IP timeline available in the playground).
+        const dbgSimulatedLocation = normaliseSimulatedLocation(simulatedOrder.simulatedLocation);
+        let r5Fired = false, r5Pts = 0;
+        let r5Inputs = { note: 'Skipped — provide simulatedLocation in the request to run.' };
+        if (dbgSimulatedLocation) {
+            const lastEventWithLocation = recentEvents.find(e => e.location && e.location.lat);
+            if (lastEventWithLocation) {
+                const distanceKm = calculateDistance(
+                    lastEventWithLocation.location.lat,
+                    lastEventWithLocation.location.lon,
+                    dbgSimulatedLocation.lat,
+                    dbgSimulatedLocation.lon
+                );
+                const timeDiffHours = Math.max(
+                    (Date.now() - new Date(lastEventWithLocation.timestamp).getTime()) / 3600000,
+                    1 / 3600 // never divide by zero — clamp to 1s minimum
+                );
+                const speedKmh = distanceKm / timeDiffHours;
+                r5Fired = speedKmh > 1000 && distanceKm > 50;
+                r5Pts = r5Fired ? 8 : 0;
+                if (r5Fired) riskScore += r5Pts;
+                r5Inputs = {
+                    distanceKm: +distanceKm.toFixed(1),
+                    speedKmh: +speedKmh.toFixed(1),
+                    from: { lat: lastEventWithLocation.location.lat, lon: lastEventWithLocation.location.lon, city: lastEventWithLocation.location.city || '?' },
+                    to: { lat: dbgSimulatedLocation.lat, lon: dbgSimulatedLocation.lon, city: dbgSimulatedLocation.city }
+                };
+            } else {
+                r5Inputs = { note: 'simulatedLocation provided but user has no prior event with a known location → cannot compute speed.' };
+            }
+        }
         rules.push({
             id: 'R5',
             name: 'Geospatial "Superman" check',
             origin: 'fraud-service',
             formula: 'if (speed > 1000 km/h AND distance > 50 km) score += 8',
-            inputs: { note: 'Skipped in playground — needs IP timeline. Compares request IP geo against last event IP.' },
-            fired: false,
-            points: 0
+            inputs: r5Inputs,
+            fired: r5Fired,
+            points: r5Pts
         });
 
         // ---- Model: LSTM behavioural sequence ----
@@ -891,7 +976,8 @@ app.post('/api/fraud/inference-debug', async (req, res) => {
                 recentEventTypes: recentEvents.map(e => e.eventType),
                 pastOrderCount: pastOrders.length,
                 averageOrderSize: +avgItemsPerOrder.toFixed(2),
-                averageOrderAmount: Math.round(avgAmountPerOrder)
+                averageOrderAmount: Math.round(avgAmountPerOrder),
+                simulatedLocation: dbgSimulatedLocation || null
             },
             simulatedOrder: { items, totalAmount, paymentMethod, ...autoFeatures },
             rules,

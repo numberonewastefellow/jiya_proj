@@ -363,4 +363,45 @@ router.put('/products/:id', authMiddleware, async (req, res) => {
     }
 });
 
+// ---------------------------------------------------------------------------
+// Demo-data seeding (admin only)
+//   POST /api/admin/seed         — idempotent upsert (safe)
+//   POST /api/admin/seed/reset   — wipe Users/Products/Orders/FraudAlerts/EventLog, then reseed
+// Both delegate to scripts/seed.js. The caller's admin JWT is preserved across
+// the operation (we do NOT delete the calling admin until after the wipe, and
+// the seed recreates an admin row from users.csv before responding).
+// ---------------------------------------------------------------------------
+const { runSeed, seedReset, validate } = require('../scripts/seed');
+
+router.post('/seed', authMiddleware, async (req, res) => {
+    if (req.userRole !== 'admin') return res.status(403).json({ message: 'Access denied' });
+    try {
+        const result = await runSeed({ verbose: false });
+        const errors = await validate(result);
+        if (errors.length) {
+            return res.status(500).json({ message: 'Seed completed with validation errors', errors, summary: result.summary });
+        }
+        res.json({ message: 'Seed completed', summary: result.summary });
+    } catch (err) {
+        console.error('Seed endpoint error:', err);
+        res.status(500).json({ message: 'Seed failed', error: err.message });
+    }
+});
+
+router.post('/seed/reset', authMiddleware, async (req, res) => {
+    if (req.userRole !== 'admin') return res.status(403).json({ message: 'Access denied' });
+    try {
+        const result = await seedReset();
+        const errors = await validate(result);
+        const note = 'Demo data reset. Your current admin session is now invalid because the user row was wiped — log in again as admin@trackeasy.com / password123.';
+        if (errors.length) {
+            return res.status(500).json({ message: 'Reset completed with validation errors', errors, summary: result.summary, note });
+        }
+        res.json({ message: 'Demo data reset + reseeded', summary: result.summary, note });
+    } catch (err) {
+        console.error('Seed reset endpoint error:', err);
+        res.status(500).json({ message: 'Seed reset failed', error: err.message });
+    }
+});
+
 module.exports = router;

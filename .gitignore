@@ -23,6 +23,9 @@ venv/
 # Large data files (exceed GitHub limits)
 Jiya project/creditcard.csv
 
+# Notebook training output (not used by the live pipeline; pipeline uses fraud-service/ml/*.h5,*.joblib)
+Jiya project/saved_models/
+
 # Log / scratch output
 stderr.txt
 stdout.txt

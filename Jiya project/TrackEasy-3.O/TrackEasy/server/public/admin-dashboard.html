@@ -128,6 +128,7 @@
         <li><a href="#" id="nav-blocked">Blocked Users</a></li>
         <li><a href="#" id="nav-playground">Inference Playground</a></li>
         <li><a href="#" id="nav-feedback">Feedback</a></li>
+        <li><a href="#" id="nav-demo-data">Demo Data</a></li>
         <li><a href="#" id="nav-account">Account</a></li>
       </ul>
     </nav>
@@ -346,6 +347,41 @@
           <div id="feedback-list">
             <!-- Feedback list items rendered by JS -->
           </div>
+        </section>
+      </div>
+
+      <!-- DEMO DATA VIEW -->
+      <div id="view-demo-data" class="hidden">
+        <section style="background: white; padding: 1.5rem; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); max-width: 820px;">
+          <h3 style="margin-top: 0;">Demo Data Seeding</h3>
+          <p style="color: #6b7280; margin-top: 0.25rem;">
+            Populate the database with the demo fixtures from <code>server/seed/*.csv</code> —
+            5 demo users (alice, bob, eve, vendor.fresh, vendor.tech), 10 products, 7 orders, 3 fraud alerts,
+            and 5 EventLog rows (prime the geo-anomaly demo for alice).
+            Use <strong>Reseed</strong> for routine refreshes; <strong>Reset &amp; reseed</strong> is destructive.
+          </p>
+
+          <div style="display: grid; gap: 1rem; grid-template-columns: 1fr 1fr; margin-top: 1.5rem;">
+            <div style="border: 1px solid #e5e7eb; border-radius: 8px; padding: 1rem;">
+              <h4 style="margin-top: 0; color: #065f46;">🌱 Reseed (safe, idempotent)</h4>
+              <p style="font-size: 0.9rem; color: #4b5563;">
+                Upserts users / products / orders / alerts and replaces marker-tagged seed events.
+                Existing real user data, orders, and alerts are kept.
+              </p>
+              <button id="btn-seed-run" class="btn btn-primary" style="padding: 0.6rem 1rem;">Run reseed</button>
+            </div>
+            <div style="border: 1px solid #fecaca; border-radius: 8px; padding: 1rem; background: #fef2f2;">
+              <h4 style="margin-top: 0; color: #991b1b;">⚠️ Reset &amp; reseed (destructive)</h4>
+              <p style="font-size: 0.9rem; color: #7f1d1d;">
+                Wipes <strong>all</strong> users, products, orders, fraud alerts, and EventLog rows,
+                then reseeds from CSVs. You will be logged out — sign back in as
+                <code>admin@trackeasy.com / password123</code>.
+              </p>
+              <button id="btn-seed-reset" class="btn" style="padding: 0.6rem 1rem; background: #dc2626; color: white; border: none; border-radius: 4px;">Reset &amp; reseed</button>
+            </div>
+          </div>
+
+          <pre id="seed-output" style="margin-top: 1.5rem; background: #0f172a; color: #e2e8f0; padding: 1rem; border-radius: 6px; font-size: 0.85rem; max-height: 320px; overflow: auto; display: none;"></pre>
         </section>
       </div>
 

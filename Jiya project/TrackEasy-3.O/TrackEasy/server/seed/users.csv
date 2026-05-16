@@ -1,4 +1,5 @@
 email,username,password,role,phoneNumber,address
+admin@trackeasy.com,admin,password123,admin,1000000001,HQ Mumbai
 manager1@trackeasy.com,manager1,password123,manager,1000000010,HQ Mumbai
 vendor.fresh@trackeasy.com,freshmart,password123,vendor,1000000020,Fresh Street 1 Mumbai
 vendor.tech@trackeasy.com,techworld,password123,vendor,1000000021,Tech Hub 22 Bangalore

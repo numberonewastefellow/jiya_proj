@@ -89,7 +89,16 @@ app.get('/manager-dashboard.html', authMiddleware, (req, res) => {
 
 // Connect to MongoDB
 mongoose.connect(process.env.MONGODB_URI)
-    .then(() => console.log('✅ Connected to MongoDB'))
+    .then(async () => {
+        console.log('✅ Connected to MongoDB');
+        if (process.env.SKIP_AUTO_SEED !== 'true') {
+            try {
+                await require('./scripts/seed').seedIfEmpty();
+            } catch (err) {
+                console.error('⚠️  Auto-seed failed (continuing):', err.message);
+            }
+        }
+    })
     .catch((err) => console.error('❌ MongoDB connection error:', err));
 
 // Routes

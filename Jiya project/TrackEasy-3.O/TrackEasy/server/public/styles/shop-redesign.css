@@ -637,6 +637,130 @@ html[data-theme="dark"] #view-shop .product-list .item {
 .te-cart-summary .te-trust svg { width: 16px; height: 16px; }
 
 /* =========================================================
+   GEO SIMULATOR PICKER (cart-page "Shopping from" card)
+   ========================================================= */
+
+/* Lay out cart-list, geo-picker (under it), and summary (sticky right rail). */
+.te-cart-grid > .te-cart-list    { grid-column: 1; grid-row: 1; }
+.te-cart-grid > .te-geo-picker   { grid-column: 1; grid-row: 2; }
+.te-cart-grid > .te-cart-summary { grid-column: 2; grid-row: 1 / span 2; }
+@media (max-width: 1000px) {
+  .te-cart-grid > .te-cart-list,
+  .te-cart-grid > .te-geo-picker,
+  .te-cart-grid > .te-cart-summary { grid-column: 1; grid-row: auto; }
+}
+
+.te-geo-picker {
+  background: var(--te-surface);
+  border: 1px solid var(--te-border);
+  border-radius: var(--te-radius);
+  padding: 1.1rem 1.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  box-shadow: var(--te-shadow);
+}
+.te-geo-picker__head {
+  display: flex; justify-content: space-between; align-items: flex-start;
+  gap: 1rem; flex-wrap: wrap;
+}
+.te-geo-picker__head h3 {
+  margin: 0;
+  font-size: 1.05rem; font-weight: 700; color: var(--te-text);
+  display: flex; align-items: center; gap: 0.45rem;
+}
+.te-geo-picker__badge {
+  font-size: 0.62rem; font-weight: 700; letter-spacing: 1px; text-transform: uppercase;
+  padding: 2px 7px; border-radius: 999px;
+  background: var(--te-accent-soft); color: var(--te-accent-h);
+  border: 1px solid var(--te-border-hi);
+}
+.te-geo-picker__hint {
+  margin: 0.25rem 0 0;
+  color: var(--te-text-muted);
+  font-size: 0.82rem;
+  max-width: 38rem;
+}
+
+.te-geo-status {
+  font-size: 0.88rem;
+  padding: 0.45rem 0.7rem;
+  border-radius: 999px;
+  background: var(--te-input-bg);
+  border: 1px solid var(--te-border);
+  color: var(--te-text);
+}
+.te-geo-status small { color: var(--te-text-muted); margin-left: 4px; }
+.te-geo-status--active {
+  background: var(--te-accent-soft);
+  border-color: var(--te-border-hi);
+  color: var(--te-accent-h);
+}
+.te-geo-status--active small { color: var(--te-accent-h); opacity: 0.7; }
+
+.te-geo-picker__row {
+  display: flex; align-items: center; gap: 0.6rem;
+  flex-wrap: wrap;
+}
+.te-geo-picker__row > label {
+  color: var(--te-text-muted);
+  font-size: 0.85rem; font-weight: 600;
+  min-width: 80px;
+}
+.te-geo-picker__row > .te-input { flex: 1; min-width: 180px; }
+.te-geo-picker__row--secondary {
+  border-top: 1px dashed var(--te-border);
+  padding-top: 0.7rem;
+  gap: 0.5rem;
+}
+
+.te-geo-toggle {
+  background: var(--te-input-bg);
+  color: var(--te-text);
+  border: 1px solid var(--te-border);
+  border-radius: 999px;
+  padding: 0.4rem 0.85rem;
+  font-weight: 600; font-size: 0.85rem;
+  cursor: pointer;
+  transition: border-color .15s, background .15s, color .15s;
+}
+.te-geo-toggle:hover {
+  border-color: var(--te-accent);
+  background: var(--te-accent-soft);
+  color: var(--te-accent-h);
+}
+.te-geo-toggle--danger {
+  border-color: rgba(239,68,68,0.35);
+  color: var(--te-danger);
+  background: rgba(239,68,68,0.06);
+}
+.te-geo-toggle--danger:hover {
+  border-color: var(--te-danger);
+  background: rgba(239,68,68,0.12);
+  color: var(--te-danger);
+}
+
+.te-geo-picker__advanced {
+  display: flex; align-items: center; gap: 0.6rem;
+  flex-wrap: wrap;
+  padding: 0.6rem 0.75rem;
+  background: var(--te-input-bg);
+  border: 1px dashed var(--te-border);
+  border-radius: 10px;
+}
+.te-geo-picker__advanced.te-collapsed { display: none; }
+.te-geo-picker__advanced label {
+  color: var(--te-text-muted);
+  font-size: 0.82rem; font-weight: 600;
+}
+.te-input--narrow { width: 110px; flex: 0 0 auto; }
+
+.te-btn-sm {
+  padding: 0.45rem 0.95rem !important;
+  font-size: 0.85rem !important;
+}
+
+/* =========================================================
    ORDERS + ACCOUNT VIEWS (theme-aware)
    ========================================================= */
 

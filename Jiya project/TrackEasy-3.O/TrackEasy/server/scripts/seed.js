@@ -4,11 +4,13 @@
  *
  * Reads ../seed/*.csv and upserts into MongoDB. Safe to run multiple times.
  *
- * Usage (inside the trackeasy container):
- *   node scripts/seed.js
+ * Usage:
+ *   docker compose exec trackeasy npm run seed         # idempotent upsert
+ *   docker compose exec trackeasy npm run seed:reset   # wipe + reseed
  *
- * Usage on host with Mongo on localhost:
- *   MONGODB_URI=mongodb://localhost:27017/trackeasy node scripts/seed.js
+ * Programmatic (server.js auto-boot):
+ *   const { seedIfEmpty } = require('./scripts/seed');
+ *   await seedIfEmpty();   // no-op if any users already exist
  */
 const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
@@ -19,9 +21,9 @@ const User = require('../models/User');
 const Product = require('../models/Product');
 const Order = require('../models/Order');
 const FraudAlert = require('../models/FraudAlert');
+const EventLog = require('../models/EventLog');
 
 const SEED_DIR = path.join(__dirname, '..', 'seed');
-const MONGO = process.env.MONGODB_URI || 'mongodb://mongo:27017/trackeasy';
 
 function parseCSV(csvString) {
     const lines = csvString.replace(/\r/g, '').split('\n').filter(l => l.length > 0);
@@ -52,14 +54,12 @@ function parseCSV(csvString) {
     });
 }
 
-async function main() {
-    await mongoose.connect(MONGO);
-    console.log(`Connected: ${MONGO}`);
-
-    const summary = { users: 0, products: 0, orders: 0, alerts: 0 };
+async function runSeed({ verbose = true } = {}) {
+    const log = verbose ? console.log.bind(console) : () => {};
+    const summary = { users: 0, products: 0, orders: 0, alerts: 0, events: 0 };
     const userIdByEmail = {};
 
-    // USERS (supports all 3 use cases)
+    // USERS
     const users = parseCSV(fs.readFileSync(path.join(SEED_DIR, 'users.csv'), 'utf8'));
     for (const u of users) {
         const hash = await bcrypt.hash(u.password, 10);
@@ -80,9 +80,9 @@ async function main() {
         userIdByEmail[u.email] = doc._id;
         summary.users++;
     }
-    console.log(`Users upserted: ${summary.users}`);
+    log(`   ↳ Users upserted: ${summary.users}`);
 
-    // PRODUCTS (use case 2 - vendor flow)
+    // PRODUCTS
     const products = parseCSV(fs.readFileSync(path.join(SEED_DIR, 'products.csv'), 'utf8'));
     for (const p of products) {
         const vendorId = userIdByEmail[p.vendor_email];
@@ -101,9 +101,9 @@ async function main() {
         );
         summary.products++;
     }
-    console.log(`Products upserted: ${summary.products}`);
+    log(`   ↳ Products upserted: ${summary.products}`);
 
-    // ORDERS (use case 1 - customer flow)
+    // ORDERS
     const orders = parseCSV(fs.readFileSync(path.join(SEED_DIR, 'orders.csv'), 'utf8'));
     for (const o of orders) {
         const customerId = userIdByEmail[o.customer_email];
@@ -131,9 +131,9 @@ async function main() {
         );
         summary.orders++;
     }
-    console.log(`Orders upserted: ${summary.orders}`);
+    log(`   ↳ Orders upserted: ${summary.orders}`);
 
-    // FRAUD ALERTS (use case 3 - admin/manager flow)
+    // FRAUD ALERTS
     const alerts = parseCSV(fs.readFileSync(path.join(SEED_DIR, 'fraud_alerts.csv'), 'utf8'));
     for (const a of alerts) {
         const userId = userIdByEmail[a.user_email];
@@ -157,10 +157,35 @@ async function main() {
         );
         summary.alerts++;
     }
-    console.log(`Fraud alerts upserted: ${summary.alerts}`);
+    log(`   ↳ Fraud alerts upserted: ${summary.alerts}`);
 
-    // VALIDATION
-    console.log('\n--- VALIDATION ---');
+    // EVENT LOG (primes the geo-anomaly demo)
+    // Seeded events are tagged ipAddress='seed:loopback' so re-runs can purge prior seeded
+    // rows without touching real user-traffic events.
+    const eventsPath = path.join(SEED_DIR, 'events.csv');
+    if (fs.existsSync(eventsPath)) {
+        const events = parseCSV(fs.readFileSync(eventsPath, 'utf8'));
+        const seededUids = events.map(e => userIdByEmail[e.user_email]).filter(Boolean);
+        await EventLog.deleteMany({ userId: { $in: seededUids }, ipAddress: 'seed:loopback' });
+        for (const e of events) {
+            const uid = userIdByEmail[e.user_email];
+            if (!uid) throw new Error(`events.csv references unknown user: ${e.user_email}`);
+            await EventLog.create({
+                userId: uid,
+                eventType: e.eventType,
+                ipAddress: 'seed:loopback',
+                location: { lat: Number(e.lat), lon: Number(e.lon), city: e.city, country: e.country },
+                timestamp: new Date(Date.now() - Number(e.minutes_ago || 0) * 60000)
+            });
+            summary.events++;
+        }
+        log(`   ↳ EventLog rows upserted: ${summary.events}`);
+    }
+
+    return { summary, userIdByEmail, users };
+}
+
+async function validate({ summary, userIdByEmail, users }) {
     const counts = {
         total_users: await User.countDocuments(),
         admins: await User.countDocuments({ role: 'admin' }),
@@ -169,7 +194,8 @@ async function main() {
         customers: await User.countDocuments({ role: 'customer' }),
         products: await Product.countDocuments(),
         orders: await Order.countDocuments(),
-        alerts: await FraudAlert.countDocuments()
+        alerts: await FraudAlert.countDocuments(),
+        events: await EventLog.countDocuments()
     };
     console.log('DB totals:', counts);
 
@@ -181,7 +207,6 @@ async function main() {
     };
     console.log('Seeded linkage:', linked);
 
-    // Assertions
     const errors = [];
     if (linked.products_linked_to_seed_vendors < summary.products)
         errors.push(`Products: expected ≥${summary.products} linked, got ${linked.products_linked_to_seed_vendors}`);
@@ -190,7 +215,6 @@ async function main() {
     if (linked.alerts_linked_to_seed_users < summary.alerts)
         errors.push(`Alerts: expected ≥${summary.alerts} linked, got ${linked.alerts_linked_to_seed_users}`);
 
-    // Password hash sanity: one customer must authenticate with the seeded password
     const testEmail = 'customer.alice@trackeasy.com';
     const testUser = await User.findOne({ email: testEmail });
     if (!testUser) {
@@ -200,18 +224,65 @@ async function main() {
         if (!ok) errors.push(`Auth check: password mismatch for ${testEmail}`);
     }
 
-    // Vendor ↔ product sanity: each seeded vendor should own ≥ 1 product
     for (const u of users.filter(x => x.role === 'vendor')) {
         const n = await Product.countDocuments({ vendor: userIdByEmail[u.email] });
         if (n < 1) errors.push(`Vendor ${u.email} has no products`);
     }
 
-    if (errors.length) {
-        console.error('\nVALIDATION FAILED:\n' + errors.map(e => '  - ' + e).join('\n'));
-        process.exit(2);
-    }
-    console.log('\nAll validations passed.');
-    process.exit(0);
+    return errors;
 }
 
-main().catch(e => { console.error('Seed failed:', e); process.exit(1); });
+async function seedIfEmpty() {
+    const count = await User.countDocuments();
+    if (count > 0) return { skipped: true, reason: `users.count=${count}` };
+    console.log('🌱 Empty DB detected — running first-time seed…');
+    const result = await runSeed({ verbose: true });
+    return { skipped: false, ...result };
+}
+
+async function seedReset() {
+    console.log('🧹 Wiping Users + Products + Orders + FraudAlerts + EventLog…');
+    await Promise.all([
+        User.deleteMany({}),
+        Product.deleteMany({}),
+        Order.deleteMany({}),
+        FraudAlert.deleteMany({}),
+        EventLog.deleteMany({})
+    ]);
+    console.log('🌱 Re-seeding…');
+    return runSeed({ verbose: true });
+}
+
+module.exports = { runSeed, seedIfEmpty, seedReset, validate };
+
+// CLI entrypoint — only runs when invoked directly (not when require()'d).
+if (require.main === module) {
+    require('dotenv').config();
+    const mode = process.argv[2] || 'seed';
+    const uri = process.env.MONGODB_URI || 'mongodb://mongo:27017/trackeasy';
+    (async () => {
+        await mongoose.connect(uri);
+        console.log(`Connected: ${uri}`);
+        try {
+            let result;
+            if (mode === 'reset') {
+                result = await seedReset();
+            } else {
+                // CLI "seed" runs the idempotent upsert unconditionally (not gated on empty DB).
+                // This matches the original scripts/seed.js behaviour.
+                result = await runSeed({ verbose: true });
+            }
+            console.log('\n--- VALIDATION ---');
+            const errors = await validate(result);
+            if (errors.length) {
+                console.error('\nVALIDATION FAILED:\n' + errors.map(e => '  - ' + e).join('\n'));
+                process.exit(2);
+            }
+            console.log('\nAll validations passed.');
+            process.exit(0);
+        } catch (e) {
+            console.error('Seed failed:', e);
+            process.exit(1);
+        }
+    })();
+}

@@ -58,6 +58,40 @@ Once all four services report ready, open:
 
 No `.env` files, no DB seeding, no manual model training — everything ships in the images.
 
+### Windows shortcut — `build.bat`
+
+A small batch helper sits next to `docker-compose.yml` for the most common compose actions. Run it from any directory; it auto-cds to its own folder so paths-with-spaces don't bite.
+
+```bat
+build.bat help            REM Show all commands
+
+REM Common build/start operations
+build.bat up              REM Start all services in background
+build.bat up-build        REM Rebuild + start everything
+build.bat up-web          REM Rebuild + (re)start just trackeasy
+build.bat up-fraud        REM Rebuild + (re)start just fraud-service
+build.bat up-ml           REM Rebuild + (re)start just ml-service
+build.bat build-all       REM Rebuild every image without starting
+
+REM Stop / reset
+build.bat down            REM Stop containers (keep DB volume)
+build.bat reset           REM Stop AND wipe the mongo volume
+
+REM Restart without rebuild
+build.bat restart         REM All services
+build.bat restart-web     REM trackeasy only
+build.bat restart-fraud   REM fraud-service only
+build.bat restart-ml      REM ml-service only
+
+REM Diagnostics & data
+build.bat logs            REM Tail all logs
+build.bat logs-fraud      REM Tail one service
+build.bat ps              REM Container status
+build.bat seed            REM Run server/scripts/seed.js inside trackeasy
+```
+
+Linux/macOS users can keep using `docker compose ...` directly — the helper is Windows-only convenience.
+
 ## Demo data & credentials
 
 The app boots with an empty MongoDB. You have two ways to get started:

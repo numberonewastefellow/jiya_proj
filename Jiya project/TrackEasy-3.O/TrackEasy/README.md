@@ -17,6 +17,55 @@ docker compose up -d jupyter      # just the notebook environment
 docker compose up -d mongo trackeasy   # web app + DB only
 ```
 
+## First-Time Setup — Seeded Demo Data
+
+On the very first boot (when the `users` collection is empty), `trackeasy` auto-seeds a demo dataset from [`server/seed/*.csv`](server/seed/) so you can log in and click around immediately. Subsequent boots find existing users and skip the seed entirely — no risk of clobbering data.
+
+**Seeded accounts** — all passwords are `password123` (demo-only; change for any non-local deployment):
+
+| Email | Role |
+| --- | --- |
+| `admin@trackeasy.com` | admin |
+| `manager1@trackeasy.com` | manager |
+| `vendor.fresh@trackeasy.com` | vendor (groceries) |
+| `vendor.tech@trackeasy.com` | vendor (electronics) |
+| `customer.alice@trackeasy.com` | customer |
+| `customer.bob@trackeasy.com` | customer |
+| `customer.eve@trackeasy.com` | customer (fraud-prone in demo) |
+
+**Also seeded**:
+- **10 products** with real `picsum.photos` images (5 groceries + 5 electronics)
+- **7 demo orders** across customers (mix of Delivered, On Board, Pending, Rejected)
+- **3 fraud-alert records** to populate the admin dashboard immediately
+- **5 EventLog rows** — Mumbai login history for alice, Bangalore for bob
+
+The Mumbai history primes the **geo-anomaly demo** — log in as `customer.alice@trackeasy.com / password123`, add an item, flip the cart-page "Ordering from" picker to "🗽 New York", click Proceed → the OTP modal fires immediately with reason *"Order placed from a new location — New York, US (≈12 500 km from your usual area: Mumbai)"*.
+
+### Manual seed commands
+
+```bash
+# Idempotent upsert — safe to re-run; updates existing rows, inserts new ones:
+docker compose exec trackeasy npm run seed
+
+# DESTRUCTIVE — wipes Users + Products + Orders + FraudAlerts + EventLog, then reseeds:
+docker compose exec trackeasy npm run seed:reset
+```
+
+After editing any of the `server/seed/*.csv` files, run `npm run seed` to push changes into the DB.
+
+### Admin UI
+
+Once you're logged in as `admin@trackeasy.com / password123`, the admin dashboard has a **Demo Data** tab in the sidebar with two buttons:
+
+- **🌱 Run reseed** — `POST /api/admin/seed`, idempotent upsert
+- **⚠️ Reset & reseed** — `POST /api/admin/seed/reset`, destructive; logs you out so you can sign back in against the fresh admin row
+
+Both endpoints require an admin JWT; non-admin callers get `403`.
+
+### Disable auto-seed
+
+For production or CI, set `SKIP_AUTO_SEED=true` in the `trackeasy` service env. The server then never seeds, even on an empty DB.
+
 ## Services
 
 | Service | Host URL | Container Port | Image / Build | Purpose |

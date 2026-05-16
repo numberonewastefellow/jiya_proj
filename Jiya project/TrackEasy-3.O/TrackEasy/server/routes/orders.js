@@ -130,7 +130,11 @@ router.post('/', authMiddleware, async (req, res) => {
                         ipAddress: req.ip || req.connection.remoteAddress,
                         transactionDetails: { items, totalAmount, paymentMethod },
                         biometrics: req.body.biometrics || null,
-                        hp_trap: req.body.hp_trap || false
+                        hp_trap: req.body.hp_trap || false,
+                        // Optional demo-only override forwarded as-is from the cart "Shopping from"
+                        // picker. fraud-service validates / normalises and treats it as the current
+                        // geo for R5; absent → server falls back to req.ip → resolveGeoIP.
+                        simulatedLocation: req.body.simulatedLocation || null
                     })
                 });
                 

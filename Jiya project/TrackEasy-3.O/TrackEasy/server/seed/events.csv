@@ -1,0 +1,6 @@
+user_email,eventType,ipAddress,lat,lon,city,country,minutes_ago
+customer.alice@trackeasy.com,login,::1,19.0760,72.8777,Mumbai,IN,1440
+customer.alice@trackeasy.com,login,::1,19.0760,72.8777,Mumbai,IN,120
+customer.alice@trackeasy.com,add_to_cart,::1,19.0760,72.8777,Mumbai,IN,60
+customer.bob@trackeasy.com,login,::1,12.9716,77.5946,Bangalore,IN,1440
+customer.bob@trackeasy.com,login,::1,12.9716,77.5946,Bangalore,IN,180
