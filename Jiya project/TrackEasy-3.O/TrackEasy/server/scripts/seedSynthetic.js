@@ -285,7 +285,10 @@ function buildUsers(profile, opts) {
 
         users.push({
             username: `synth_user_${i}`,
-            email: `synth_${i}@demo.local`,
+            // TLD must be 2-3 chars to pass User.email validator regex
+            // (/^\w+([\.-]?\w+)*@\w+([\.-]?\w+)*(\.\w{2,3})+$/). `.local` (5 chars)
+            // silently fails every insert and leaves the synthetic-user table empty.
+            email: `synth_${i}@demo.dev`,
             password: sharedHash,
             role: 'customer',
             phoneNumber: phone,
@@ -663,6 +666,16 @@ async function generate(opts) {
     // Re-fetch the synthetic users we just wrote so we have their _id values.
     // Using username pattern is unique enough.
     const writtenUsers = await User.find({ synthetic: true }).select('_id username phoneNumber address deviceFingerprint').lean();
+    if (writtenUsers.length === 0) {
+        throw new Error(
+            'seedSynthetic: no synthetic users found after insertMany. ' +
+            'This usually means every user-insert failed validation silently ' +
+            '(insertMany runs with ordered:false). Check the most recent ' +
+            '[seedSynthetic] insertMany warning logged above for the actual ' +
+            'validation error (common culprits: email TLD > 3 chars, phone not ' +
+            'exactly 10 digits, missing required field).'
+        );
+    }
     // Map back helper metadata onto the lean docs (by username index).
     const byUsername = new Map(userDocs.map(u => [u.username, u]));
     const usersForRefs = writtenUsers.map(w => {
