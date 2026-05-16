@@ -666,10 +666,16 @@ function renderD3Map(recentGeoEvents, impossibleTravel) {
       attribution: '© OpenStreetMap',
       maxZoom: 18
     }).addTo(d3Map);
-  } else {
-    // If returning to view, ensure proper sizing.
-    setTimeout(() => { try { d3Map.invalidateSize(); } catch (_) {} }, 50);
   }
+  // Always invalidate size after the view becomes visible. The map container
+  // can report a stale size (e.g. zero on first paint while the parent was
+  // still .hidden), which leaves Leaflet rendering tiles into a tiny region.
+  // Double rAF lets the browser commit the layout before we re-measure.
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      try { d3Map.invalidateSize(); } catch (_) {}
+    });
+  });
 
   d3ClearMapLayers();
 
@@ -763,13 +769,20 @@ function renderD3Tod(cells) {
   const canvas = document.getElementById('chart-d3-tod');
   if (!canvas) return;
 
-  // Find or create the grid container right after the canvas.
-  const parent = canvas.parentElement;
-  let grid = parent.querySelector('.tod-grid');
+  // Mount the grid as a SIBLING of the .te-chart-wrap (inside the .card),
+  // not inside it. The .te-chart-wrap has a fixed 260px height + position:relative
+  // (it's sized for the Chart.js canvas), and rendering a 7×24 grid inside that
+  // wrapper makes the grid overflow + stack as block elements. Putting the grid
+  // beside the wrapper avoids both problems.
+  const wrap = canvas.parentElement;               // .te-chart-wrap
+  const card = wrap && wrap.parentElement;          // .card
+  if (!card) return;
+
+  let grid = card.querySelector(':scope > .tod-grid');
   if (grid) grid.remove();
 
-  // Hide the canvas — we render a div-grid instead.
-  canvas.style.display = 'none';
+  // Hide the entire wrapper so it doesn't reserve 260px of empty space.
+  if (wrap) wrap.style.display = 'none';
 
   const maxEvents = Math.max(1, ...cells.map(c => c.events || 0));
   const DOW_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -806,7 +819,7 @@ function renderD3Tod(cells) {
     }
   }
 
-  canvas.insertAdjacentElement('afterend', grid);
+  card.appendChild(grid);
 }
 
 function renderD3R5Table(rows) {
