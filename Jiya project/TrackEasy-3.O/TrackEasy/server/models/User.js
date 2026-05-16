@@ -87,6 +87,11 @@ const userSchema = new mongoose.Schema({
     lastCheckoutDuration: {
         type: Number, // in milliseconds
         default: 60000 // default 60s
+    },
+    synthetic: {
+        type: Boolean,
+        default: false,
+        index: true
     }
 }, {
     timestamps: true

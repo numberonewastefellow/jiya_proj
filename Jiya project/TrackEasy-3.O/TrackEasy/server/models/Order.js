@@ -33,7 +33,12 @@ const orderSchema = new mongoose.Schema({
         comment: { type: String },
         createdAt: { type: Date }
     },
-    createdAt: { type: Date, default: Date.now }
+    createdAt: { type: Date, default: Date.now },
+    synthetic: {
+        type: Boolean,
+        default: false,
+        index: true
+    }
 });
 
 module.exports = mongoose.model('Order', orderSchema);

@@ -1059,3 +1059,101 @@ html[data-theme="dark"] .te-passkey-status { color: #6ee7b7; }
   .shop-section { padding: 0 0.75rem 1.5rem; }
   .te-hero { margin: 0.75rem 0.75rem 0.5rem; padding: 0.85rem 1rem; }
 }
+
+/* =========================================================
+   SYNTHETIC SEED CARD (admin demo data view)
+   ========================================================= */
+.preset-buttons { display: flex; gap: 8px; flex-wrap: wrap; }
+.output-console {
+  background: #0b1220;
+  color: #e2e8f0;
+  padding: 12px;
+  border-radius: 6px;
+  font-family: monospace;
+  font-size: 12px;
+  max-height: 240px;
+  overflow: auto;
+}
+.hidden { display: none !important; }
+
+/* ---------------------------------------------------------------------------
+   D1 — Fraud Overview Dashboard
+   --------------------------------------------------------------------------- */
+.kpi-strip {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+  margin-bottom: 16px;
+}
+.kpi-card {
+  background: var(--card-bg, #fff);
+  padding: 16px;
+  border-radius: 8px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+}
+.kpi-label {
+  font-size: 12px;
+  color: #64748b;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.kpi-value {
+  font-size: 28px;
+  font-weight: 700;
+  margin: 6px 0;
+  color: #111827;
+}
+.kpi-delta { font-size: 13px; color: #64748b; }
+.kpi-delta.up   { color: #dc2626; }  /* up = more fraud = bad */
+.kpi-delta.down { color: #16a34a; }  /* down = less fraud = good */
+.charts-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  margin-top: 16px;
+}
+.card canvas { max-height: 280px; }
+.data-table { width: 100%; border-collapse: collapse; }
+.data-table th,
+.data-table td {
+  padding: 8px 12px;
+  text-align: left;
+  border-bottom: 1px solid #e2e8f0;
+}
+.data-table thead { background: #f8fafc; }
+@media (max-width: 900px) {
+  .kpi-strip { grid-template-columns: repeat(2, 1fr); }
+  .charts-row { grid-template-columns: 1fr; }
+}
+
+/* ---------------------------------------------------------------------------
+   D2 — Detection Activity (window selector + muted helper)
+   --------------------------------------------------------------------------- */
+.window-selector { display: flex; align-items: center; gap: 6px; margin-bottom: 16px; padding: 6px; background: #f1f5f9; border-radius: 8px; }
+.window-selector button { padding: 6px 14px; border: none; background: transparent; border-radius: 6px; cursor: pointer; font-size: 13px; color: #475569; transition: all 0.15s; }
+.window-selector button:hover { background: rgba(99,102,241,0.08); }
+.window-selector button.active { background: #fff; color: #6366f1; box-shadow: 0 1px 2px rgba(0,0,0,0.08); font-weight: 600; }
+.muted { color: #64748b; font-size: 13px; }
+
+/* D3 — manual time-of-day grid (fallback when not using Chart.js matrix plugin) */
+.tod-grid { display: grid; grid-template-columns: 28px repeat(24, 1fr); gap: 2px; font-size: 10px; user-select: none; }
+.tod-grid .tod-row-label { color: #64748b; text-align: right; padding: 2px 4px; }
+.tod-grid .tod-cell { height: 18px; border-radius: 2px; background: rgba(99,102,241,0.05); transition: transform 0.1s; }
+.tod-grid .tod-cell:hover { transform: scale(1.2); outline: 1px solid #6366f1; cursor: help; }
+.tod-grid .tod-col-header { font-size: 9px; color: #94a3b8; text-align: center; }
+
+/* ---------------------------------------------------------------------------
+   D4 — Fraud Ring (Cytoscape graph + slider controls + side panel)
+   --------------------------------------------------------------------------- */
+.ring-controls { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+.ring-slider { display: flex; align-items: center; gap: 8px; font-size: 13px; color: #475569; }
+.ring-slider input[type=range] { width: 200px; }
+.ring-side-header { display: flex; justify-content: space-between; align-items: center; gap: 16px; margin-bottom: 12px; }
+.btn-sm { padding: 4px 10px; font-size: 12px; }
+#d4-graph { position: relative; }
+#d4-graph .cy-tooltip { background: #0f172a; color: #fff; padding: 6px 10px; border-radius: 4px; font-size: 12px; pointer-events: none; position: absolute; z-index: 10; }
+.risk-badge { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 12px; font-weight: 600; }
+.risk-badge.low { background: #dcfce7; color: #166534; }
+.risk-badge.med { background: #fef3c7; color: #92400e; }
+.risk-badge.high { background: #fee2e2; color: #991b1b; }
+#d3-map .leaflet-popup-content { font-size: 12px; }

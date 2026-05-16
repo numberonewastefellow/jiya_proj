@@ -1,4 +1,4 @@
-import { get, post, put } from './api.js';
+import { get, post, put, del } from './api.js';
 import { createCard, createTableRow, renderLoader } from './ui.js';
 
 // Global state
@@ -8,10 +8,37 @@ let currentFilter = 'all';
 let lastBlockedUserIds = new Set();
 let firstLoad = true;
 
+// D1 — chart instances + refresh timer (module-scope)
+const d1Charts = { trend: null, actionMix: null };
+let d1RefreshTimer = null;
+const ACTION_COLORS = { allow: '#16a34a', warning: '#ca8a04', requires_otp: '#d97706', block: '#dc2626' };
+
+// D2 — Detection Activity chart instances + refresh timer + current window
+const d2Charts = { rules: null, models: null, scatter: null, actionByDay: null };
+let d2RefreshTimer = null;
+let d2CurrentDays = 7;
+let d2Wired = false;
+
+// D3 — Geo & Device chart instances + map + refresh timer + current window
+const d3Charts = { cities: null, tod: null };
+let d3RefreshTimer = null;
+let d3CurrentDays = 1;
+let d3Wired = false;
+let d3LeafletLoaded = false;
+let d3Map = null;
+const d3MapLayers = { markers: [], polylines: [] };
+
+// D4 — Fraud Ring (Cytoscape) state
+let d4Cy = null;
+let d4GraphData = null;
+let d4MinRisk = 0;
+let d4RefreshTimer = null;
+let d4CytoscapeLoaded = false;
+let d4Wired = false;
+
 export async function initAdminDashboard() {
-  const cardGrid = document.getElementById('summary-cards');
-  const ordersTable = document.getElementById('orders-table').querySelector('tbody');
-  if (cardGrid) cardGrid.innerHTML = renderLoader();
+  const ordersTableEl = document.getElementById('orders-table');
+  const ordersTable = ordersTableEl ? ordersTableEl.querySelector('tbody') : null;
   if (ordersTable) ordersTable.innerHTML = renderLoader();
 
   setupNavigation();
@@ -33,15 +60,9 @@ export async function initAdminDashboard() {
   } catch (e) { console.error('Error setting title:', e); }
 
   try {
-    // Fetch summary data
-    const summary = await fetchAdminSummary();
-    if (cardGrid) {
-      cardGrid.innerHTML = '';
-      renderSummaryCards(cardGrid, summary);
-    }
-
-    // Load charts (placeholders)
-    await loadAdminCharts();
+    // D1 Fraud Overview — KPIs + charts + risky users + 30s auto-refresh
+    await loadFraudOverview();
+    startD1AutoRefresh();
 
     console.log('Admin Dashboard Initializing...');
     // Inject modal if not exists
@@ -49,7 +70,7 @@ export async function initAdminDashboard() {
       injectOrderDetailsModal();
     }
 
-    // Fetch and display orders
+    // Fetch and display orders (drives the separate Orders view)
     const orders = await get('/orders/vendor-orders');
     console.log('Fetched orders:', orders);
 
@@ -76,7 +97,6 @@ export async function initAdminDashboard() {
     renderFilteredOrders('all');
   } catch (e) {
     console.error('Admin dashboard error:', e);
-    if (cardGrid) cardGrid.innerHTML = `<div class="error-message">Error loading summary: ${e.message}</div>`;
     if (ordersTable) ordersTable.innerHTML = `<tr><td colspan="7" class="error-message">Error loading orders: ${e.message}</td></tr>`;
   }
 }
@@ -159,35 +179,970 @@ function renderSummaryCards(parent, summary) {
   parent.appendChild(riskCard);
 }
 
-async function loadAdminCharts() {
+// =========================================================================
+// D1 — Fraud Overview (Dashboard view)
+// =========================================================================
+function paintKpi(id, todayVal, yestVal) {
+  const card = document.getElementById(id);
+  if (!card) return;
+  const valEl = card.querySelector('.kpi-value');
+  const deltaEl = card.querySelector('.kpi-delta');
+  if (valEl) valEl.textContent = Number(todayVal || 0).toLocaleString();
+  if (!deltaEl) return;
+  const t = Number(todayVal || 0);
+  const y = Number(yestVal || 0);
+  if (y === 0 && t === 0) {
+    deltaEl.textContent = '—';
+    deltaEl.className = 'kpi-delta';
+    return;
+  }
+  if (y === 0) {
+    deltaEl.textContent = '▲ new';
+    deltaEl.className = 'kpi-delta up';
+    return;
+  }
+  const pct = ((t - y) / y) * 100;
+  const arrow = pct >= 0 ? '▲' : '▼';
+  deltaEl.textContent = `${arrow} ${Math.abs(pct).toFixed(1)}% vs yesterday`;
+  deltaEl.className = 'kpi-delta ' + (pct >= 0 ? 'up' : 'down');
+}
+
+function renderD1Trend(trend) {
+  const ctx = document.getElementById('chart-d1-trend');
+  if (!ctx || typeof Chart === 'undefined') return;
+  if (d1Charts.trend) { d1Charts.trend.destroy(); d1Charts.trend = null; }
+
+  const labels = trend.map(d => d.date.slice(5)); // MM-DD
+  d1Charts.trend = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [
+        { label: 'Alerts', data: trend.map(d => d.alerts), borderColor: '#dc2626', backgroundColor: 'rgba(220,38,38,0.1)', tension: 0.3, yAxisID: 'y' },
+        { label: 'Orders', data: trend.map(d => d.orders), borderColor: '#2563eb', backgroundColor: 'rgba(37,99,235,0.1)', tension: 0.3, yAxisID: 'y' },
+        { label: 'Blocks', data: trend.map(d => d.blocks), borderColor: '#7c2d12', backgroundColor: 'rgba(124,45,18,0.1)', tension: 0.3, yAxisID: 'y' },
+        { label: 'Fraud rate', data: trend.map(d => d.fraudRate), borderColor: '#f59e0b', backgroundColor: 'rgba(245,158,11,0.15)', borderDash: [4,3], tension: 0.3, yAxisID: 'y1', fill: false }
+      ]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: { position: 'bottom' },
+        tooltip: {
+          callbacks: {
+            label: (ctx) => {
+              if (ctx.dataset.label === 'Fraud rate') return `Fraud rate: ${(ctx.parsed.y * 100).toFixed(1)}%`;
+              return `${ctx.dataset.label}: ${ctx.parsed.y}`;
+            }
+          }
+        }
+      },
+      scales: {
+        y:  { type: 'linear', position: 'left',  beginAtZero: true, title: { display: true, text: 'Count' } },
+        y1: { type: 'linear', position: 'right', beginAtZero: true, max: 1, grid: { drawOnChartArea: false }, ticks: { callback: v => `${Math.round(v * 100)}%` }, title: { display: true, text: 'Fraud rate' } }
+      }
+    }
+  });
+}
+
+function renderD1ActionMix(mix) {
+  const ctx = document.getElementById('chart-d1-actionmix');
+  if (!ctx || typeof Chart === 'undefined') return;
+  if (d1Charts.actionMix) { d1Charts.actionMix.destroy(); d1Charts.actionMix = null; }
+
+  const labels = ['allow', 'warning', 'requires_otp', 'block'];
+  const data = labels.map(k => mix[k] || 0);
+  const colors = labels.map(k => ACTION_COLORS[k]);
+
+  d1Charts.actionMix = new Chart(ctx, {
+    type: 'doughnut',
+    data: { labels, datasets: [{ data, backgroundColor: colors, borderWidth: 2, borderColor: '#fff' }] },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { position: 'bottom' },
+        tooltip: {
+          callbacks: {
+            label: (ctx) => {
+              const total = data.reduce((a, b) => a + b, 0) || 1;
+              const pct = ((ctx.parsed / total) * 100).toFixed(1);
+              return `${ctx.label}: ${ctx.parsed} (${pct}%)`;
+            }
+          }
+        }
+      }
+    }
+  });
+}
+
+function renderD1RiskyTable(users) {
+  const tbody = document.querySelector('#table-d1-risky tbody');
+  if (!tbody) return;
+  if (!users || users.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; color:#6b7280; padding:1rem;">No risky users in last 30 days.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = users.map(u => {
+    const username = (u.username || 'unknown').replace(/'/g, "\\'");
+    const email = u.email || '—';
+    const score = (u.latestRiskScore != null) ? u.latestRiskScore : 0;
+    const scoreColor = score > 8 ? '#dc2626' : score > 6 ? '#d97706' : score > 3 ? '#ca8a04' : '#16a34a';
+    let statusBadge;
+    if (u.isBlocked) {
+      statusBadge = `<span style="background:#fee2e2; color:#991b1b; padding:0.15rem 0.55rem; border-radius:999px; font-size:0.8rem; font-weight:600;">Blocked</span>`;
+    } else {
+      statusBadge = `<span style="background:#dcfce7; color:#166534; padding:0.15rem 0.55rem; border-radius:999px; font-size:0.8rem; font-weight:600;">Active</span>`;
+    }
+    return `
+      <tr>
+        <td><a href="#" onclick="viewBlockedDetail('${u._id}', '${username}'); return false;" style="color:#2563eb; text-decoration:none; font-weight:500;">${u.username || 'unknown'}</a></td>
+        <td>${email}</td>
+        <td style="color:${scoreColor}; font-weight:600;">${score}</td>
+        <td>${u.alertsCount || 0}</td>
+        <td>${statusBadge}</td>
+      </tr>`;
+  }).join('');
+}
+
+async function loadFraudOverview() {
   try {
-    const deliveryTrend = await get('/admin/analytics/delivery-trend');
-    const trendElement = document.getElementById('chart-delivery-trend');
-    if (deliveryTrend && deliveryTrend.trend && deliveryTrend.trend.length > 0) {
-      trendElement.textContent = `Delivery Trend: ${deliveryTrend.trend.length} data points`;
-    } else if (trendElement) {
-      trendElement.textContent = '';
+    const data = await get('/admin/insights/overview');
+    if (!data || data.message) {
+      console.warn('loadFraudOverview: unexpected response', data);
+      return;
     }
-    const vendorPerf = await get('/admin/analytics/vendor-performance');
-    const vendorElement = document.getElementById('chart-vendor-performance');
-    if (vendorPerf && vendorPerf.vendors && vendorPerf.vendors.length > 0) {
-      vendorElement.textContent = `Vendor Performance: ${vendorPerf.vendors.length} vendors`;
-    } else if (vendorElement) {
-      vendorElement.textContent = '';
+    const t = data.today || {};
+    const y = data.yesterday || {};
+    paintKpi('kpi-events', t.events, y.events);
+    paintKpi('kpi-orders', t.orders, y.orders);
+    paintKpi('kpi-alerts', t.alerts, y.alerts);
+    paintKpi('kpi-blocks', t.blocks, y.blocks);
+
+    renderD1Trend(data.trend7days || []);
+    renderD1ActionMix(data.actionMix || {});
+    renderD1RiskyTable(data.topRiskyUsers || []);
+  } catch (e) {
+    console.error('loadFraudOverview error:', e);
+  }
+}
+
+function startD1AutoRefresh() {
+  if (d1RefreshTimer) clearInterval(d1RefreshTimer);
+  d1RefreshTimer = setInterval(() => {
+    const view = document.getElementById('view-dashboard');
+    if (view && !view.classList.contains('hidden')) {
+      loadFraudOverview();
     }
-    const paymentFailures = await get('/admin/analytics/payment-failures');
-    const failureElement = document.getElementById('chart-failure-reasons');
-    if (paymentFailures && paymentFailures.failures && paymentFailures.failures.length > 0) {
-      failureElement.textContent = `Payment Failures: ${paymentFailures.failures.length} failures`;
-    } else if (failureElement) {
-      failureElement.textContent = '';
+  }, 30000);
+}
+
+function stopD1AutoRefresh() {
+  if (d1RefreshTimer) { clearInterval(d1RefreshTimer); d1RefreshTimer = null; }
+}
+
+// =====================================================================
+// D2 — Detection Activity (rule + model firing rate, scatter, by-day stack)
+// =====================================================================
+function renderD2Rules(rules) {
+  const ctx = document.getElementById('chart-d2-rules');
+  if (!ctx || typeof Chart === 'undefined') return;
+  if (d2Charts.rules) { d2Charts.rules.destroy(); d2Charts.rules = null; }
+  const labels = rules.map(r => r.id);
+  const data = rules.map(r => +(r.rate * 100).toFixed(2));
+  d2Charts.rules = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [{
+        label: 'Firing rate (%)',
+        data,
+        backgroundColor: '#6366f1',
+        borderColor: '#4f46e5',
+        borderWidth: 1
+      }]
+    },
+    options: {
+      indexAxis: 'y',
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          callbacks: {
+            label: (ctx) => {
+              const r = rules[ctx.dataIndex] || {};
+              return [
+                `${r.name || ctx.label}`,
+                `Firing rate: ${(r.rate * 100).toFixed(1)}%`,
+                `Fired: ${r.fired || 0}`,
+                `Avg points when fired: ${r.avgPointsWhenFired || 0}`
+              ];
+            }
+          }
+        }
+      },
+      scales: {
+        x: { beginAtZero: true, ticks: { callback: v => `${v}%` }, title: { display: true, text: 'Firing rate' } },
+        y: { title: { display: true, text: 'Rule' } }
+      }
+    }
+  });
+}
+
+function renderD2Models(models) {
+  const ctx = document.getElementById('chart-d2-models');
+  if (!ctx || typeof Chart === 'undefined') return;
+  if (d2Charts.models) { d2Charts.models.destroy(); d2Charts.models = null; }
+  const labels = models.map(m => m.id);
+  const data = models.map(m => +(m.rate * 100).toFixed(2));
+  d2Charts.models = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [{
+        label: 'Firing rate (%)',
+        data,
+        backgroundColor: '#0ea5e9',
+        borderColor: '#0284c7',
+        borderWidth: 1
+      }]
+    },
+    options: {
+      indexAxis: 'y',
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          callbacks: {
+            label: (ctx) => {
+              const m = models[ctx.dataIndex] || {};
+              return [
+                `${m.name || ctx.label}`,
+                `Endpoint: ${m.endpoint || '—'}`,
+                `Firing rate: ${(m.rate * 100).toFixed(1)}%`,
+                `Fired: ${m.fired || 0}`,
+                `Avg points when fired: ${m.avgPointsWhenFired || 0}`
+              ];
+            }
+          }
+        }
+      },
+      scales: {
+        x: { beginAtZero: true, ticks: { callback: v => `${v}%` }, title: { display: true, text: 'Firing rate' } },
+        y: { title: { display: true, text: 'Model' } }
+      }
+    }
+  });
+}
+
+function renderD2Scatter(points) {
+  const ctx = document.getElementById('chart-d2-scatter');
+  if (!ctx || typeof Chart === 'undefined') return;
+  if (d2Charts.scatter) { d2Charts.scatter.destroy(); d2Charts.scatter = null; }
+
+  const actions = ['allow', 'warning', 'requires_otp', 'block'];
+  const datasets = actions.map(a => ({
+    label: a,
+    data: points
+      .filter(p => p.action === a)
+      .map(p => ({ x: p.riskScore, y: p.brainProb })),
+    backgroundColor: ACTION_COLORS[a],
+    borderColor: ACTION_COLORS[a],
+    pointRadius: 4,
+    pointHoverRadius: 6
+  }));
+
+  d2Charts.scatter = new Chart(ctx, {
+    type: 'scatter',
+    data: { datasets },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { position: 'bottom' },
+        tooltip: {
+          callbacks: {
+            label: (ctx) => `${ctx.dataset.label}: riskScore=${ctx.parsed.x}, brainProb=${(ctx.parsed.y * 100).toFixed(1)}%`
+          }
+        }
+      },
+      scales: {
+        x: { type: 'linear', min: 0, max: 10, title: { display: true, text: 'RuleScore (0–10)' } },
+        y: { type: 'linear', min: 0, max: 1, ticks: { callback: v => `${Math.round(v * 100)}%` }, title: { display: true, text: 'ANN Brain probability' } }
+      }
+    }
+  });
+}
+
+function renderD2ActionByDay(rows) {
+  const ctx = document.getElementById('chart-d2-actionbyday');
+  if (!ctx || typeof Chart === 'undefined') return;
+  if (d2Charts.actionByDay) { d2Charts.actionByDay.destroy(); d2Charts.actionByDay = null; }
+
+  const labels = rows.map(r => (r.date || '').slice(5)); // MM-DD
+  const actions = ['allow', 'warning', 'requires_otp', 'block'];
+  const datasets = actions.map(a => ({
+    label: a,
+    data: rows.map(r => r[a] || 0),
+    backgroundColor: ACTION_COLORS[a],
+    borderColor: ACTION_COLORS[a],
+    borderWidth: 1,
+    stack: 'actions'
+  }));
+
+  d2Charts.actionByDay = new Chart(ctx, {
+    type: 'bar',
+    data: { labels, datasets },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { position: 'bottom' },
+        tooltip: { mode: 'index', intersect: false }
+      },
+      scales: {
+        x: { stacked: true, title: { display: true, text: 'Date' } },
+        y: { stacked: true, beginAtZero: true, title: { display: true, text: 'Alerts' } }
+      }
+    }
+  });
+}
+
+async function loadDetectionActivity(days) {
+  d2CurrentDays = days || d2CurrentDays || 7;
+  try {
+    const data = await get(`/admin/insights/detection-activity?days=${d2CurrentDays}`);
+    if (!data || data.message) {
+      console.warn('loadDetectionActivity: unexpected response', data);
+      return;
+    }
+    const totalEl = document.getElementById('d2-total');
+    if (totalEl) totalEl.textContent = (data.totalAlerts != null) ? data.totalAlerts : '—';
+
+    renderD2Rules(data.ruleFiringRate || []);
+    renderD2Models(data.modelFiringRate || []);
+    renderD2Scatter(data.scatter || []);
+    renderD2ActionByDay(data.actionByDay || []);
+  } catch (e) {
+    console.error('loadDetectionActivity error:', e);
+  }
+}
+
+function startD2AutoRefresh() {
+  if (d2RefreshTimer) clearInterval(d2RefreshTimer);
+  d2RefreshTimer = setInterval(() => {
+    const view = document.getElementById('view-detection');
+    if (view && !view.classList.contains('hidden')) {
+      loadDetectionActivity(d2CurrentDays);
+    }
+  }, 30000);
+}
+
+function stopD2AutoRefresh() {
+  if (d2RefreshTimer) { clearInterval(d2RefreshTimer); d2RefreshTimer = null; }
+  // Tear down chart instances so re-entry rebuilds cleanly with fresh data.
+  ['rules', 'models', 'scatter', 'actionByDay'].forEach(k => {
+    if (d2Charts[k]) { d2Charts[k].destroy(); d2Charts[k] = null; }
+  });
+}
+
+function setupD2WindowSelector() {
+  if (d2Wired) return;
+  const root = document.getElementById('d2-window');
+  if (!root) return;
+  root.addEventListener('click', (e) => {
+    const btn = e.target.closest('button[data-days]');
+    if (!btn) return;
+    document.querySelectorAll('#d2-window button').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    loadDetectionActivity(parseInt(btn.dataset.days, 10));
+  });
+  d2Wired = true;
+}
+
+// =====================================================================
+// D3 — Geo & Device (Leaflet map + cities bar + TOD heatmap + tables)
+// =====================================================================
+function d3RiskColor(score) {
+  const s = Number(score) || 0;
+  return s >= 7 ? '#dc2626' : s >= 4 ? '#d97706' : '#16a34a';
+}
+
+function d3EscapeHtml(str) {
+  return String(str == null ? '' : str)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+// Lazy-load Leaflet CSS + JS from CDN.
+async function ensureLeaflet() {
+  if (d3LeafletLoaded && typeof L !== 'undefined') return;
+  // Inject CSS if not already present.
+  if (!document.querySelector('link[data-leaflet="1"]')) {
+    const link = document.createElement('link');
+    link.rel = 'stylesheet';
+    link.href = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css';
+    link.setAttribute('data-leaflet', '1');
+    document.head.appendChild(link);
+  }
+  // Inject JS if not already present.
+  if (typeof L === 'undefined') {
+    await new Promise((resolve, reject) => {
+      const existing = document.querySelector('script[data-leaflet="1"]');
+      if (existing) {
+        if (existing.dataset.loaded === '1') return resolve();
+        existing.addEventListener('load', () => resolve());
+        existing.addEventListener('error', reject);
+        return;
+      }
+      const s = document.createElement('script');
+      s.src = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js';
+      s.async = true;
+      s.setAttribute('data-leaflet', '1');
+      s.addEventListener('load', () => { s.dataset.loaded = '1'; resolve(); });
+      s.addEventListener('error', reject);
+      document.head.appendChild(s);
+    });
+  }
+  d3LeafletLoaded = true;
+}
+
+function d3ClearMapLayers() {
+  if (!d3Map) return;
+  d3MapLayers.markers.forEach(m => { try { d3Map.removeLayer(m); } catch (_) {} });
+  d3MapLayers.polylines.forEach(p => { try { d3Map.removeLayer(p); } catch (_) {} });
+  d3MapLayers.markers = [];
+  d3MapLayers.polylines = [];
+}
+
+function renderD3Map(recentGeoEvents, impossibleTravel) {
+  if (typeof L === 'undefined') return;
+  const mapEl = document.getElementById('d3-map');
+  if (!mapEl) return;
+
+  if (!d3Map) {
+    d3Map = L.map('d3-map', { worldCopyJump: true }).setView([20, 0], 2);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      attribution: '© OpenStreetMap',
+      maxZoom: 18
+    }).addTo(d3Map);
+  } else {
+    // If returning to view, ensure proper sizing.
+    setTimeout(() => { try { d3Map.invalidateSize(); } catch (_) {} }, 50);
+  }
+
+  d3ClearMapLayers();
+
+  (recentGeoEvents || []).forEach(ev => {
+    if (typeof ev.lat !== 'number' || typeof ev.lon !== 'number') return;
+    const m = L.circleMarker([ev.lat, ev.lon], {
+      radius: 5,
+      fillColor: d3RiskColor(ev.latestRiskScore),
+      color: '#fff',
+      weight: 1,
+      fillOpacity: 0.85
+    });
+    m.bindPopup(
+      `<strong>${d3EscapeHtml(ev.username || 'unknown')}</strong><br>` +
+      `${d3EscapeHtml(ev.eventType || '')}<br>` +
+      `${d3EscapeHtml(ev.city || '')}${ev.country ? ', ' + d3EscapeHtml(ev.country) : ''}<br>` +
+      `Risk: <strong style="color:${d3RiskColor(ev.latestRiskScore)}">${ev.latestRiskScore || 0}</strong><br>` +
+      `<span style="color:#64748b">${new Date(ev.timestamp).toLocaleString()}</span>`
+    );
+    m.addTo(d3Map);
+    d3MapLayers.markers.push(m);
+  });
+
+  (impossibleTravel || []).forEach(r => {
+    if (typeof r.fromLat !== 'number' || typeof r.toLat !== 'number') return;
+    const line = L.polyline([[r.fromLat, r.fromLon], [r.toLat, r.toLon]], {
+      color: '#dc2626',
+      weight: 2,
+      opacity: 0.7
+    });
+    line.bindPopup(
+      `<strong>Impossible travel</strong><br>` +
+      `${d3EscapeHtml(r.username || '')}<br>` +
+      `${d3EscapeHtml(r.fromCity || '')} → ${d3EscapeHtml(r.toCity || '')}<br>` +
+      `Speed: ${Math.round(r.speedKmh)} km/h · Distance: ${Math.round(r.distanceKm)} km`
+    );
+    line.addTo(d3Map);
+    d3MapLayers.polylines.push(line);
+  });
+}
+
+function renderD3Cities(rows) {
+  const ctx = document.getElementById('chart-d3-cities');
+  if (!ctx || typeof Chart === 'undefined') return;
+  if (d3Charts.cities) { d3Charts.cities.destroy(); d3Charts.cities = null; }
+  const labels = rows.map(r => `${r.city || '—'}${r.country ? ', ' + r.country : ''}`);
+  const data = rows.map(r => r.events || 0);
+  d3Charts.cities = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [{
+        label: 'Events',
+        data,
+        backgroundColor: '#6366f1',
+        borderColor: '#4f46e5',
+        borderWidth: 1
+      }]
+    },
+    options: {
+      indexAxis: 'y',
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          callbacks: {
+            label: (c) => {
+              const r = rows[c.dataIndex] || {};
+              return [
+                `${r.city || '—'}${r.country ? ', ' + r.country : ''}`,
+                `Events: ${r.events || 0}`,
+                `Avg risk: ${r.avgRisk || 0}`
+              ];
+            }
+          }
+        }
+      },
+      scales: {
+        x: { beginAtZero: true, title: { display: true, text: 'Events' } },
+        y: { title: { display: false } }
+      }
+    }
+  });
+}
+
+// TOD heatmap: replace the canvas with a manual 7×24 grid of colored cells.
+// Each refresh clears the host card and re-renders the grid; the original
+// canvas element is preserved (hidden) so the HTML markup stays intact.
+function renderD3Tod(cells) {
+  const canvas = document.getElementById('chart-d3-tod');
+  if (!canvas) return;
+
+  // Find or create the grid container right after the canvas.
+  const parent = canvas.parentElement;
+  let grid = parent.querySelector('.tod-grid');
+  if (grid) grid.remove();
+
+  // Hide the canvas — we render a div-grid instead.
+  canvas.style.display = 'none';
+
+  const maxEvents = Math.max(1, ...cells.map(c => c.events || 0));
+  const DOW_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+  grid = document.createElement('div');
+  grid.className = 'tod-grid';
+
+  // Header row: empty corner + 24 hour columns.
+  const corner = document.createElement('div');
+  corner.className = 'tod-col-header';
+  corner.textContent = '';
+  grid.appendChild(corner);
+  for (let h = 0; h < 24; h++) {
+    const c = document.createElement('div');
+    c.className = 'tod-col-header';
+    c.textContent = String(h);
+    grid.appendChild(c);
+  }
+
+  // 7 day rows.
+  for (let dow = 0; dow < 7; dow++) {
+    const lbl = document.createElement('div');
+    lbl.className = 'tod-row-label';
+    lbl.textContent = DOW_LABELS[dow];
+    grid.appendChild(lbl);
+    for (let h = 0; h < 24; h++) {
+      const cell = cells.find(c => c.dow === dow && c.hour === h) || { events: 0, alerts: 0 };
+      const alpha = cell.events > 0 ? Math.min(1, 0.08 + (cell.events / maxEvents) * 0.92) : 0.04;
+      const div = document.createElement('div');
+      div.className = 'tod-cell';
+      div.style.background = `rgba(99,102,241,${alpha.toFixed(3)})`;
+      div.title = `${DOW_LABELS[dow]} ${h}:00 — ${cell.events} events, ${cell.alerts} alerts`;
+      grid.appendChild(div);
+    }
+  }
+
+  canvas.insertAdjacentElement('afterend', grid);
+}
+
+function renderD3R5Table(rows) {
+  const tbody = document.querySelector('#table-d3-r5 tbody');
+  if (!tbody) return;
+  if (!rows || rows.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; padding:1rem; color:#64748b;">No impossible-travel events in this window.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = '';
+  rows.forEach(r => {
+    const tr = document.createElement('tr');
+    tr.style.cursor = 'pointer';
+    tr.dataset.fromLat = r.fromLat;
+    tr.dataset.fromLon = r.fromLon;
+    tr.dataset.toLat = r.toLat;
+    tr.dataset.toLon = r.toLon;
+    tr.innerHTML = `
+      <td>${d3EscapeHtml(r.username || r.userId || '')}</td>
+      <td>${Math.round(r.speedKmh || 0)} km/h</td>
+      <td>${Math.round(r.distanceKm || 0)} km</td>
+      <td>${d3EscapeHtml(r.fromCity || '')} → ${d3EscapeHtml(r.toCity || '')}</td>
+      <td>${r.toAt ? new Date(r.toAt).toLocaleString() : ''}</td>
+    `;
+    tr.addEventListener('click', () => {
+      if (!d3Map || typeof L === 'undefined') return;
+      const fLat = Number(tr.dataset.fromLat), fLon = Number(tr.dataset.fromLon);
+      const tLat = Number(tr.dataset.toLat),   tLon = Number(tr.dataset.toLon);
+      if ([fLat, fLon, tLat, tLon].every(n => Number.isFinite(n))) {
+        d3Map.fitBounds([[fLat, fLon], [tLat, tLon]], { padding: [60, 60] });
+      }
+    });
+    tbody.appendChild(tr);
+  });
+}
+
+function renderD3DevicesTable(rows) {
+  const tbody = document.querySelector('#table-d3-devices tbody');
+  if (!tbody) return;
+  if (!rows || rows.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="4" style="text-align:center; padding:1rem; color:#64748b;">No devices shared across multiple accounts.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = '';
+  rows.forEach(r => {
+    const usernames = (r.users || []).map(u => d3EscapeHtml(u.username || '')).join(', ');
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td><code>${d3EscapeHtml(r.fingerprintShort || r.deviceFingerprint || '')}</code></td>
+      <td>${r.userCount || 0}</td>
+      <td>${usernames}</td>
+      <td>${r.anyBlocked
+        ? '<span style="font-weight:600; color:#dc2626;">Yes</span>'
+        : '<span style="color:#16a34a;">No</span>'}</td>
+    `;
+    tbody.appendChild(tr);
+  });
+}
+
+async function loadGeoDevice(days) {
+  d3CurrentDays = days || d3CurrentDays || 1;
+  try {
+    await ensureLeaflet();
+  } catch (e) {
+    console.error('Leaflet failed to load:', e);
+  }
+  try {
+    const data = await get(`/admin/insights/geo-device?days=${d3CurrentDays}`);
+    if (!data || data.message) {
+      console.warn('loadGeoDevice: unexpected response', data);
+      return;
+    }
+    const countEl = document.getElementById('d3-event-count');
+    if (countEl) countEl.textContent = (data.recentGeoEvents || []).length;
+
+    renderD3Map(data.recentGeoEvents || [], data.impossibleTravel || []);
+    renderD3Cities(data.topRiskyCities || []);
+    renderD3Tod(data.todHeatmap || []);
+    renderD3R5Table(data.impossibleTravel || []);
+    renderD3DevicesTable(data.sharedDevices || []);
+  } catch (e) {
+    console.error('loadGeoDevice error:', e);
+  }
+}
+
+function startD3AutoRefresh() {
+  if (d3RefreshTimer) clearInterval(d3RefreshTimer);
+  d3RefreshTimer = setInterval(() => {
+    const view = document.getElementById('view-geo');
+    if (view && !view.classList.contains('hidden')) {
+      loadGeoDevice(d3CurrentDays);
+    }
+  }, 30000);
+}
+
+function stopD3AutoRefresh() {
+  if (d3RefreshTimer) { clearInterval(d3RefreshTimer); d3RefreshTimer = null; }
+  // Destroy Chart.js instances so re-entry rebuilds cleanly; keep the map
+  // instance intact (cheap re-entry) but clear its layers.
+  ['cities', 'tod'].forEach(k => {
+    if (d3Charts[k]) { d3Charts[k].destroy(); d3Charts[k] = null; }
+  });
+  d3ClearMapLayers();
+}
+
+function setupD3WindowSelector() {
+  if (d3Wired) return;
+  const root = document.getElementById('d3-window');
+  if (!root) return;
+  root.addEventListener('click', (e) => {
+    const btn = e.target.closest('button[data-days]');
+    if (!btn) return;
+    document.querySelectorAll('#d3-window button').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    loadGeoDevice(parseInt(btn.dataset.days, 10));
+  });
+  d3Wired = true;
+}
+
+// =========================================================================
+// D4 — Fraud Ring Graph (Cytoscape.js, lazy-loaded)
+// =========================================================================
+
+// Lazy-load Cytoscape.js from CDN.
+async function ensureCytoscape() {
+  if (d4CytoscapeLoaded && typeof cytoscape !== 'undefined') return;
+  if (typeof cytoscape === 'undefined') {
+    await new Promise((resolve, reject) => {
+      const existing = document.querySelector('script[data-cytoscape="1"]');
+      if (existing) {
+        if (existing.dataset.loaded === '1') return resolve();
+        existing.addEventListener('load', () => resolve());
+        existing.addEventListener('error', reject);
+        return;
+      }
+      const s = document.createElement('script');
+      s.src = 'https://cdn.jsdelivr.net/npm/cytoscape@3.28.1/dist/cytoscape.min.js';
+      s.async = true;
+      s.setAttribute('data-cytoscape', '1');
+      s.addEventListener('load', () => { s.dataset.loaded = '1'; resolve(); });
+      s.addEventListener('error', reject);
+      document.head.appendChild(s);
+    });
+  }
+  d4CytoscapeLoaded = true;
+}
+
+// Risk-score → fill color (matches the legend in the muted hint).
+function d4FillColor(riskScore, isBlocked) {
+  if (isBlocked) return '#dc2626';
+  if (riskScore >= 7) return '#f97316';
+  if (riskScore >= 4) return '#fbbf24';
+  return '#94a3b8';
+}
+
+// sharedVia → edge color (purple/cyan/pink).
+const D4_EDGE_COLORS = { phone: '#8b5cf6', address: '#06b6d4', device: '#ec4899' };
+
+async function loadFraudRing(minRisk) {
+  if (typeof minRisk === 'number') d4MinRisk = minRisk;
+  try {
+    await ensureCytoscape();
+  } catch (e) {
+    console.error('Cytoscape failed to load:', e);
+    return;
+  }
+  try {
+    const data = await get(`/admin/insights/graph?minRisk=${d4MinRisk}`);
+    if (!data || data.message) {
+      console.warn('loadFraudRing: unexpected response', data);
+      return;
+    }
+    d4GraphData = data;
+
+    // Update stats line.
+    const statsEl = document.getElementById('d4-stats');
+    if (statsEl) {
+      const s = data.stats || {};
+      statsEl.textContent = `${s.componentCount || 0} components · largest ${s.largestComponent || 0} nodes · ${s.totalNodes || 0} total nodes`;
+    }
+
+    // Build Cytoscape elements with pre-computed visual attrs.
+    const nodes = (data.nodes || []).map(n => ({
+      data: {
+        id: n.id,
+        username: n.username,
+        email: n.email,
+        riskScore: n.riskScore,
+        isBlocked: n.isBlocked,
+        clusterSize: n.clusterSize,
+        size: 12 + (Number(n.riskScore) || 0) * 4,
+        fillColor: d4FillColor(Number(n.riskScore) || 0, !!n.isBlocked)
+      }
+    }));
+    const edges = (data.edges || []).map((e, i) => ({
+      data: {
+        id: `e${i}-${e.source}-${e.target}-${e.sharedVia}`,
+        source: e.source,
+        target: e.target,
+        sharedVia: e.sharedVia,
+        edgeColor: D4_EDGE_COLORS[e.sharedVia] || '#94a3b8'
+      }
+    }));
+    const elements = nodes.concat(edges);
+
+    const container = document.getElementById('d4-graph');
+    if (!container) return;
+
+    if (!d4Cy) {
+      // eslint-disable-next-line no-undef
+      d4Cy = cytoscape({
+        container,
+        elements,
+        style: [
+          {
+            selector: 'node',
+            style: {
+              'background-color': 'data(fillColor)',
+              'label': 'data(username)',
+              'width': 'data(size)',
+              'height': 'data(size)',
+              'font-size': 10,
+              'text-valign': 'bottom',
+              'text-margin-y': 4,
+              'color': '#1e293b',
+              'border-color': '#fff',
+              'border-width': 2,
+            }
+          },
+          {
+            selector: 'node:selected',
+            style: { 'border-color': '#6366f1', 'border-width': 3 }
+          },
+          {
+            selector: 'edge',
+            style: {
+              'width': 1.5,
+              'line-color': 'data(edgeColor)',
+              'label': 'data(sharedVia)',
+              'font-size': 8,
+              'color': '#64748b',
+              'text-background-color': '#fff',
+              'text-background-opacity': 0.8,
+              'curve-style': 'bezier',
+              'opacity': 0.5,
+            }
+          },
+        ],
+        layout: {
+          name: 'cose',
+          animate: false,
+          fit: true,
+          padding: 30,
+          nodeRepulsion: () => 8000,
+          idealEdgeLength: () => 80
+        },
+        wheelSensitivity: 0.2
+      });
+
+      // Tap a node → open side panel; tap background → close.
+      d4Cy.on('tap', 'node', (evt) => {
+        const node = evt.target;
+        openD4Side(node);
+      });
+      d4Cy.on('tap', (evt) => {
+        if (evt.target === d4Cy) {
+          const side = document.getElementById('d4-side');
+          if (side) side.classList.add('hidden');
+        }
+      });
+    } else {
+      // Reuse instance: replace elements, re-run layout.
+      d4Cy.elements().remove();
+      d4Cy.add(elements);
+      d4Cy.layout({
+        name: 'cose',
+        animate: false,
+        fit: true,
+        padding: 30,
+        nodeRepulsion: () => 8000,
+        idealEdgeLength: () => 80
+      }).run();
     }
   } catch (e) {
-    console.error('Error loading charts:', e);
-    const d = document.getElementById('chart-delivery-trend'); if (d) d.textContent = 'Error loading chart';
-    const v = document.getElementById('chart-vendor-performance'); if (v) v.textContent = 'Error loading chart';
-    const f = document.getElementById('chart-failure-reasons'); if (f) f.textContent = 'Error loading chart';
+    console.error('loadFraudRing error:', e);
   }
+}
+
+function openD4Side(node) {
+  const side = document.getElementById('d4-side');
+  const nameEl = document.getElementById('d4-side-name');
+  const bodyEl = document.getElementById('d4-side-body');
+  if (!side || !nameEl || !bodyEl) return;
+
+  const id = node.data('id');
+  const username = node.data('username') || '(unknown)';
+  const email = node.data('email') || '—';
+  const riskScore = Number(node.data('riskScore')) || 0;
+  const isBlocked = !!node.data('isBlocked');
+  const clusterSize = node.data('clusterSize') || 1;
+
+  let badgeClass = 'low';
+  if (riskScore >= 7) badgeClass = 'high';
+  else if (riskScore >= 4) badgeClass = 'med';
+
+  nameEl.textContent = username;
+  bodyEl.innerHTML = `
+    <div style="display:grid; grid-template-columns:max-content 1fr; gap:6px 14px; font-size:13px; color:#334155;">
+      <div style="color:#64748b">Email</div><div>${escapeHtml(email)}</div>
+      <div style="color:#64748b">Risk score</div><div><span class="risk-badge ${badgeClass}">${riskScore}</span></div>
+      <div style="color:#64748b">Blocked</div><div>${isBlocked ? 'Yes' : 'No'}</div>
+      <div style="color:#64748b">Cluster size</div><div>${clusterSize}</div>
+    </div>
+    <div style="margin-top:12px">
+      <button class="btn btn-outline btn-sm" id="d4-side-trace">View full trace</button>
+    </div>
+  `;
+  side.classList.remove('hidden');
+
+  const traceBtn = document.getElementById('d4-side-trace');
+  if (traceBtn) {
+    traceBtn.addEventListener('click', () => {
+      if (typeof viewBlockedDetail === 'function') {
+        viewBlockedDetail(id, username);
+      } else if (typeof window !== 'undefined' && typeof window.viewBlockedDetail === 'function') {
+        window.viewBlockedDetail(id, username);
+      }
+    });
+  }
+}
+
+function startD4AutoRefresh() {
+  if (d4RefreshTimer) clearInterval(d4RefreshTimer);
+  d4RefreshTimer = setInterval(() => {
+    const view = document.getElementById('view-ring');
+    if (view && !view.classList.contains('hidden')) {
+      loadFraudRing(d4MinRisk);
+    }
+  }, 30000);
+}
+
+function stopD4AutoRefresh() {
+  if (d4RefreshTimer) { clearInterval(d4RefreshTimer); d4RefreshTimer = null; }
+  // Keep d4Cy alive to avoid re-layout cost; just clear elements next entry.
+}
+
+function setupD4Controls() {
+  if (d4Wired) return;
+  const slider = document.getElementById('d4-min-risk');
+  const sliderValue = document.getElementById('d4-min-risk-value');
+  const refreshBtn = document.getElementById('d4-refresh');
+  const closeBtn = document.getElementById('d4-side-close');
+
+  if (slider && sliderValue) {
+    slider.addEventListener('input', () => {
+      d4MinRisk = parseInt(slider.value, 10) || 0;
+      sliderValue.textContent = d4MinRisk;
+    });
+    slider.addEventListener('change', () => {
+      loadFraudRing(d4MinRisk);
+    });
+  }
+  if (refreshBtn) {
+    refreshBtn.addEventListener('click', () => loadFraudRing(d4MinRisk));
+  }
+  if (closeBtn) {
+    closeBtn.addEventListener('click', () => {
+      const side = document.getElementById('d4-side');
+      if (side) side.classList.add('hidden');
+    });
+  }
+  d4Wired = true;
 }
 
 function createOrderRowWithModal(transformedOrder, fullOrder) {
@@ -421,8 +1376,8 @@ function renderFilteredOrders(filter) {
 // ===============================
 function setupNavigation() {
   console.log('Initializing Admin Navigation...');
-  const navIds = ['nav-dashboard', 'nav-orders', 'nav-analytics', 'nav-users', 'nav-blocked', 'nav-playground', 'nav-feedback', 'nav-demo-data', 'nav-account'];
-  const viewIds = ['view-dashboard', 'view-orders', 'view-analytics', 'view-users', 'view-blocked', 'view-playground', 'view-feedback', 'view-demo-data', 'view-account'];
+  const navIds = ['nav-dashboard', 'nav-orders', 'nav-analytics', 'nav-users', 'nav-blocked', 'nav-detection', 'nav-geo', 'nav-ring', 'nav-playground', 'nav-feedback', 'nav-demo-data', 'nav-account'];
+  const viewIds = ['view-dashboard', 'view-orders', 'view-analytics', 'view-users', 'view-blocked', 'view-detection', 'view-geo', 'view-ring', 'view-playground', 'view-feedback', 'view-demo-data', 'view-account'];
 
   navIds.forEach(id => {
     const el = document.getElementById(id);
@@ -464,6 +1419,33 @@ function setupNavigation() {
     });
 
     // 3. Trigger view-specific loads
+    if (viewName === 'dashboard') {
+      if (typeof loadFraudOverview === 'function') loadFraudOverview();
+      if (typeof startD1AutoRefresh === 'function') startD1AutoRefresh();
+    } else {
+      if (typeof stopD1AutoRefresh === 'function') stopD1AutoRefresh();
+    }
+    if (viewName === 'detection') {
+      if (typeof setupD2WindowSelector === 'function') setupD2WindowSelector();
+      if (typeof loadDetectionActivity === 'function') loadDetectionActivity(d2CurrentDays);
+      if (typeof startD2AutoRefresh === 'function') startD2AutoRefresh();
+    } else {
+      if (typeof stopD2AutoRefresh === 'function') stopD2AutoRefresh();
+    }
+    if (viewName === 'geo') {
+      if (typeof setupD3WindowSelector === 'function') setupD3WindowSelector();
+      if (typeof loadGeoDevice === 'function') loadGeoDevice(d3CurrentDays);
+      if (typeof startD3AutoRefresh === 'function') startD3AutoRefresh();
+    } else {
+      if (typeof stopD3AutoRefresh === 'function') stopD3AutoRefresh();
+    }
+    if (viewName === 'ring') {
+      if (typeof setupD4Controls === 'function') setupD4Controls();
+      if (typeof loadFraudRing === 'function') loadFraudRing(d4MinRisk);
+      if (typeof startD4AutoRefresh === 'function') startD4AutoRefresh();
+    } else {
+      if (typeof stopD4AutoRefresh === 'function') stopD4AutoRefresh();
+    }
     if (viewName === 'analytics') {
       if (typeof renderAnalyticsBarChart === 'function') renderAnalyticsBarChart();
     } else if (viewName === 'users') {
@@ -477,6 +1459,7 @@ function setupNavigation() {
       if (typeof loadFeedbackData === 'function') loadFeedbackData();
     } else if (viewName === 'demo-data') {
       setupSeedButtons();
+      setupSyntheticSeedControls();
     }
   }
 }
@@ -535,6 +1518,148 @@ function setupSeedButtons() {
         writeOutput({ error: String(err) });
         resetBtn.disabled = false;
         resetBtn.textContent = original;
+      }
+    });
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Synthetic seed data (dashboards D1-D4)
+// ---------------------------------------------------------------------------
+let syntheticSeedWired = false;
+function setupSyntheticSeedControls() {
+  if (syntheticSeedWired) return;
+  syntheticSeedWired = true;
+
+  const out = document.getElementById('synthetic-seed-output');
+  const writeOutput = (obj) => {
+    if (!out) return;
+    out.style.display = 'block';
+    out.textContent = typeof obj === 'string' ? obj : JSON.stringify(obj, null, 2);
+  };
+  const appendOutput = (line) => {
+    if (!out) return;
+    out.style.display = 'block';
+    out.textContent = (out.textContent ? out.textContent + '\n' : '') + line;
+  };
+
+  const allButtons = () => document.querySelectorAll('#card-synthetic-seed button');
+  const setBusy = (busy, label) => {
+    allButtons().forEach(b => { b.disabled = busy; });
+    if (label) appendOutput(label);
+  };
+
+  // Preset buttons
+  document.querySelectorAll('#card-synthetic-seed button[data-preset]').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const name = btn.getAttribute('data-preset');
+      const original = btn.textContent;
+      writeOutput(`Generating "${name}" preset… (this may take 10–30s)`);
+      setBusy(true);
+      btn.textContent = 'Generating…';
+      try {
+        const result = await post(`/admin/seed/synthetic/preset/${name}`, {});
+        writeOutput(result);
+        if (typeof showToast === 'function' && result && !result.error) {
+          showToast('Synthetic seed generated', `${name} preset — ${result.durationMs || '?'} ms`);
+        }
+      } catch (err) {
+        writeOutput({ error: String(err) });
+      } finally {
+        setBusy(false);
+        btn.textContent = original;
+      }
+    });
+  });
+
+  // Custom form toggle
+  const toggleBtn = document.getElementById('btn-toggle-custom-seed');
+  const form = document.getElementById('form-custom-seed');
+  if (toggleBtn && form) {
+    toggleBtn.addEventListener('click', () => {
+      form.classList.toggle('hidden');
+    });
+  }
+
+  // Custom form submit
+  if (form) {
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const fd = new FormData(form);
+      const ringSizeRaw = String(fd.get('ringSize') || '').trim();
+      const ringSize = ringSizeRaw.split(',').map(s => parseInt(s.trim(), 10)).filter(n => Number.isFinite(n) && n > 0);
+      const opts = {
+        userCount: parseInt(fd.get('userCount'), 10),
+        alertCount: parseInt(fd.get('alertCount'), 10),
+        eventCount: parseInt(fd.get('eventCount'), 10),
+        daysBack: parseInt(fd.get('daysBack'), 10),
+        ringCount: parseInt(fd.get('ringCount'), 10),
+        ringSize,
+        actionMix: {
+          allow: parseFloat(fd.get('mixAllow')),
+          warning: parseFloat(fd.get('mixWarning')),
+          requires_otp: parseFloat(fd.get('mixOtp')),
+          block: parseFloat(fd.get('mixBlock')),
+        },
+      };
+
+      // Client-side validation
+      const errs = [];
+      if (!Number.isFinite(opts.alertCount) || opts.alertCount <= 0 || opts.alertCount > 10000) errs.push('alertCount must be 1–10000');
+      if (!Number.isFinite(opts.daysBack) || opts.daysBack <= 0 || opts.daysBack > 365) errs.push('daysBack must be 1–365');
+      if (!ringSize.length && opts.ringCount > 0) errs.push('ringSize must list at least one size when ringCount > 0');
+      const am = opts.actionMix;
+      const sum = (am.allow || 0) + (am.warning || 0) + (am.requires_otp || 0) + (am.block || 0);
+      if (Math.abs(sum - 1.0) > 0.01) errs.push(`actionMix must sum to 1.0 (±0.01), got ${sum.toFixed(3)}`);
+
+      if (errs.length) {
+        writeOutput({ errors: errs });
+        return;
+      }
+
+      writeOutput('Generating custom seed… (this may take 10–30s)');
+      setBusy(true);
+      const submit = form.querySelector('button[type="submit"]');
+      const submitOriginal = submit ? submit.textContent : '';
+      if (submit) submit.textContent = 'Generating…';
+      try {
+        const result = await post('/admin/seed/synthetic', opts);
+        writeOutput(result);
+        if (typeof showToast === 'function' && result && !result.error) {
+          showToast('Synthetic seed generated', `custom — ${result.durationMs || '?'} ms`);
+        }
+      } catch (err) {
+        writeOutput({ error: String(err) });
+      } finally {
+        setBusy(false);
+        if (submit) submit.textContent = submitOriginal;
+      }
+    });
+  }
+
+  // Clear synthetic-only button
+  const clearBtn = document.getElementById('btn-clear-synthetic');
+  if (clearBtn) {
+    clearBtn.addEventListener('click', async () => {
+      const ok = window.confirm(
+        'Delete every record tagged synthetic:true (synthetic users, alerts, events, orders).\n\nCSV-seeded demo data is NOT touched. Continue?'
+      );
+      if (!ok) return;
+      const original = clearBtn.textContent;
+      writeOutput('Clearing synthetic data…');
+      setBusy(true);
+      clearBtn.textContent = 'Clearing…';
+      try {
+        const result = await del('/admin/seed/synthetic');
+        writeOutput(result);
+        if (typeof showToast === 'function' && result && !result.error) {
+          showToast('Synthetic data cleared', 'OK');
+        }
+      } catch (err) {
+        writeOutput({ error: String(err) });
+      } finally {
+        setBusy(false);
+        clearBtn.textContent = original;
       }
     });
   }
@@ -1765,6 +2890,6 @@ async function loadNotifications() {
 
 // Auto-init when DOM ready
 document.addEventListener('DOMContentLoaded', () => {
-  const root = document.getElementById('summary-cards');
+  const root = document.getElementById('view-dashboard');
   if (root) initAdminDashboard();
 });

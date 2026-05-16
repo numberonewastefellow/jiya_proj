@@ -1188,6 +1188,734 @@ app.get('/api/fraud/block-detail/:userId', async (req, res) => {
     }
 });
 
+// =====================================================================
+// D1 — Fraud Overview Insights
+// GET /api/fraud/insights/overview
+// Drives the admin Dashboard (#view-dashboard). Returns today/yesterday
+// KPIs, 7-day trend, 30-day action mix, and top-5 risky users.
+// All aggregations run in Mongo so this stays fast on 1k+ alerts.
+// =====================================================================
+app.get('/api/fraud/insights/overview', async (req, res) => {
+    try {
+        const Order = require('../server/models/Order');
+
+        // UTC midnight today + yesterday
+        const now = new Date();
+        const todayStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+        const yesterdayStart = new Date(todayStart.getTime() - 24 * 60 * 60 * 1000);
+        const sevenDaysAgo = new Date(todayStart.getTime() - 6 * 24 * 60 * 60 * 1000); // include today → 7 buckets
+        const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+
+        // ---- today / yesterday counts (5 parallel counts each window) ----
+        const [
+            todayEvents, todayOrders, todayAlerts, todayBlocks,
+            yEvents, yOrders, yAlerts, yBlocks
+        ] = await Promise.all([
+            EventLog.countDocuments({ createdAt: { $gte: todayStart } }),
+            Order.countDocuments({ createdAt: { $gte: todayStart } }),
+            FraudAlert.countDocuments({ createdAt: { $gte: todayStart } }),
+            FraudAlert.countDocuments({ createdAt: { $gte: todayStart }, action: 'block' }),
+            EventLog.countDocuments({ createdAt: { $gte: yesterdayStart, $lt: todayStart } }),
+            Order.countDocuments({ createdAt: { $gte: yesterdayStart, $lt: todayStart } }),
+            FraudAlert.countDocuments({ createdAt: { $gte: yesterdayStart, $lt: todayStart } }),
+            FraudAlert.countDocuments({ createdAt: { $gte: yesterdayStart, $lt: todayStart }, action: 'block' }),
+        ]);
+
+        // ---- 7-day trend: alerts + blocks (FraudAlert) and orders (Order) ----
+        const fmt = { $dateToString: { format: '%Y-%m-%d', date: '$createdAt', timezone: 'UTC' } };
+        const [alertAgg, orderAgg] = await Promise.all([
+            FraudAlert.aggregate([
+                { $match: { createdAt: { $gte: sevenDaysAgo } } },
+                { $group: {
+                    _id: fmt,
+                    alerts: { $sum: 1 },
+                    blocks: { $sum: { $cond: [{ $eq: ['$action', 'block'] }, 1, 0] } }
+                } }
+            ]),
+            Order.aggregate([
+                { $match: { createdAt: { $gte: sevenDaysAgo } } },
+                { $group: { _id: fmt, orders: { $sum: 1 } } }
+            ])
+        ]);
+        const alertMap = Object.fromEntries(alertAgg.map(a => [a._id, a]));
+        const orderMap = Object.fromEntries(orderAgg.map(o => [o._id, o]));
+
+        const trend7days = [];
+        for (let i = 6; i >= 0; i--) {
+            const d = new Date(todayStart.getTime() - i * 24 * 60 * 60 * 1000);
+            const key = d.toISOString().slice(0, 10); // YYYY-MM-DD UTC
+            const a = alertMap[key] || { alerts: 0, blocks: 0 };
+            const o = orderMap[key] || { orders: 0 };
+            const denom = Math.max(o.orders, 1);
+            trend7days.push({
+                date: key,
+                alerts: a.alerts,
+                orders: o.orders,
+                blocks: a.blocks,
+                fraudRate: +(a.alerts / denom).toFixed(4)
+            });
+        }
+
+        // ---- Action mix (last 30 days) ----
+        const actionAgg = await FraudAlert.aggregate([
+            { $match: { createdAt: { $gte: thirtyDaysAgo } } },
+            { $group: { _id: '$action', count: { $sum: 1 } } }
+        ]);
+        const actionMix = { allow: 0, warning: 0, requires_otp: 0, block: 0 };
+        actionAgg.forEach(a => {
+            if (a._id && actionMix.hasOwnProperty(a._id)) actionMix[a._id] = a.count;
+        });
+
+        // ---- Top 5 risky users (last 30 days) ----
+        const topRiskyAgg = await FraudAlert.aggregate([
+            { $match: { createdAt: { $gte: thirtyDaysAgo } } },
+            { $sort: { createdAt: -1 } },
+            { $group: {
+                _id: '$userId',
+                latestRiskScore: { $first: '$riskScore' },
+                alertsCount: { $sum: 1 }
+            } },
+            { $sort: { latestRiskScore: -1, alertsCount: -1 } },
+            { $limit: 5 },
+            { $lookup: {
+                from: 'users',
+                localField: '_id',
+                foreignField: '_id',
+                as: 'user'
+            } },
+            { $unwind: { path: '$user', preserveNullAndEmptyArrays: true } },
+            { $project: {
+                _id: 1,
+                latestRiskScore: 1,
+                alertsCount: 1,
+                username: '$user.username',
+                email: '$user.email',
+                isBlocked: '$user.isBlocked',
+                blockedUntil: '$user.blockedUntil'
+            } }
+        ]);
+        const topRiskyUsers = topRiskyAgg.filter(u => u.username); // drop orphaned alerts
+
+        res.json({
+            today:     { events: todayEvents, orders: todayOrders, alerts: todayAlerts, blocks: todayBlocks },
+            yesterday: { events: yEvents,     orders: yOrders,     alerts: yAlerts,     blocks: yBlocks },
+            trend7days,
+            actionMix,
+            topRiskyUsers
+        });
+    } catch (e) {
+        console.error('Insights overview error:', e);
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// =====================================================================
+// D2 — Detection Activity Insights
+// GET /api/fraud/insights/detection-activity?days=30
+// Drives the admin Detection Activity view (#view-detection). Mines the
+// decisionTrace blob from FraudAlert to surface per-rule and per-model
+// firing rates, a riskScore × ANN-probability scatter, and per-day action
+// stacks. Window is clamped to one of [7, 30, 90] days.
+// =====================================================================
+app.get('/api/fraud/insights/detection-activity', async (req, res) => {
+    try {
+        // ---- Window validation: clamp to one of [7, 30, 90], default 30 ----
+        const allowedWindows = [7, 30, 90];
+        let days = parseInt(req.query.days, 10);
+        if (!allowedWindows.includes(days)) days = 30;
+
+        const cutoff = new Date(Date.now() - days * 86400e3);
+        const alerts = await FraudAlert.find({ createdAt: { $gte: cutoff } }).lean();
+        const totalAlerts = alerts.length;
+
+        // ---- Canonical rule + model catalogues (always returned, even if zero) ----
+        const CANONICAL_RULES = [
+            { id: 'R1',  name: 'High-frequency cart additions' },
+            { id: 'R2',  name: 'Multiple payment failures' },
+            { id: 'R3',  name: 'Fast checkout after login' },
+            { id: 'R4',  name: 'Historical quantity anomaly' },
+            { id: 'R5',  name: 'Geospatial Superman' },
+            { id: 'R10', name: 'Maniacal checkout speed' },
+            { id: 'R11', name: 'Phantom Honeypot trap' }
+        ];
+        const CANONICAL_MODELS = [
+            { id: 'LSTM', name: 'Behavioural sequence',    endpoint: '/predict/behavioral', defaultPoints: 5 },
+            { id: 'GNN',  name: 'Fraud ring',              endpoint: '/predict/ring',       defaultPoints: 6 },
+            { id: 'AE',   name: 'Autoencoder anomaly',     endpoint: '/predict/anomaly',    defaultPoints: 4 },
+            { id: 'ANN',  name: 'Master Brain ensemble',   endpoint: '/predict/master',     defaultPoints: 3 }
+        ];
+
+        // ---- Rule firing rate: JS loop over alerts -> tally fired + sum points ----
+        const ruleStats = {};
+        CANONICAL_RULES.forEach(r => { ruleStats[r.id] = { fired: 0, sumPoints: 0 }; });
+        const modelStats = {};
+        CANONICAL_MODELS.forEach(m => { modelStats[m.id] = { fired: 0, sumPoints: 0 }; });
+
+        // ---- Scatter source: collect (riskScore, brainProb, action, createdAt) ----
+        const scatterAll = [];
+
+        for (const alert of alerts) {
+            const trace = alert.decisionTrace || {};
+            const rules = Array.isArray(trace.rules) ? trace.rules : [];
+            const models = Array.isArray(trace.models) ? trace.models : [];
+
+            for (const r of rules) {
+                if (r && r.id && ruleStats[r.id] && r.fired) {
+                    ruleStats[r.id].fired += 1;
+                    ruleStats[r.id].sumPoints += Number(r.points) || 0;
+                }
+            }
+            for (const m of models) {
+                if (m && m.id && modelStats[m.id] && m.fired) {
+                    modelStats[m.id].fired += 1;
+                    // Some models (e.g. ANN) have points=null; fall back per-model.
+                    const canon = CANONICAL_MODELS.find(c => c.id === m.id);
+                    const pts = (m.points != null && Number.isFinite(Number(m.points)))
+                        ? Number(m.points)
+                        : (canon ? canon.defaultPoints : 0);
+                    modelStats[m.id].sumPoints += pts;
+                }
+            }
+
+            // Scatter row — only if ANN probability is available
+            const annModel = models.find(m => m && m.id === 'ANN');
+            const brainProb = (annModel && annModel.output && typeof annModel.output.probability === 'number')
+                ? annModel.output.probability
+                : null;
+            if (brainProb != null) {
+                scatterAll.push({
+                    riskScore: Number(alert.riskScore) || 0,
+                    brainProb,
+                    action: alert.action || 'allow',
+                    createdAt: alert.createdAt
+                });
+            }
+        }
+
+        const ruleFiringRate = CANONICAL_RULES.map(r => {
+            const s = ruleStats[r.id];
+            return {
+                id: r.id,
+                name: r.name,
+                fired: s.fired,
+                rate: totalAlerts > 0 ? +(s.fired / totalAlerts).toFixed(4) : 0,
+                avgPointsWhenFired: s.fired > 0 ? +(s.sumPoints / s.fired).toFixed(2) : 0
+            };
+        });
+
+        const modelFiringRate = CANONICAL_MODELS.map(m => {
+            const s = modelStats[m.id];
+            return {
+                id: m.id,
+                name: m.name,
+                endpoint: m.endpoint,
+                fired: s.fired,
+                rate: totalAlerts > 0 ? +(s.fired / totalAlerts).toFixed(4) : 0,
+                avgPointsWhenFired: s.fired > 0 ? +(s.sumPoints / s.fired).toFixed(2) : m.defaultPoints
+            };
+        });
+
+        // ---- Scatter: shuffle + slice to <=500 (Fisher-Yates) ----
+        let scatter = scatterAll;
+        if (scatter.length > 500) {
+            for (let i = scatter.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [scatter[i], scatter[j]] = [scatter[j], scatter[i]];
+            }
+            scatter = scatter.slice(0, 500);
+        }
+
+        // ---- Actions by day: aggregation pipeline + zero-fill missing days ----
+        const dayAgg = await FraudAlert.aggregate([
+            { $match: { createdAt: { $gte: cutoff } } },
+            { $group: {
+                _id: {
+                    date: { $dateToString: { format: '%Y-%m-%d', date: '$createdAt', timezone: 'UTC' } },
+                    action: '$action'
+                },
+                count: { $sum: 1 }
+            } }
+        ]);
+        const dayMap = {};
+        dayAgg.forEach(row => {
+            const d = row._id.date;
+            const a = row._id.action || 'allow';
+            if (!dayMap[d]) dayMap[d] = { date: d, allow: 0, warning: 0, requires_otp: 0, block: 0 };
+            if (dayMap[d].hasOwnProperty(a)) dayMap[d][a] = row.count;
+        });
+        // Zero-fill every UTC day in the window so the bar chart never has gaps.
+        const actionByDay = [];
+        const now = new Date();
+        const todayStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+        for (let i = days - 1; i >= 0; i--) {
+            const d = new Date(todayStart.getTime() - i * 86400000);
+            const key = d.toISOString().slice(0, 10);
+            actionByDay.push(dayMap[key] || { date: key, allow: 0, warning: 0, requires_otp: 0, block: 0 });
+        }
+
+        res.json({
+            windowDays: days,
+            totalAlerts,
+            ruleFiringRate,
+            modelFiringRate,
+            scatter,
+            actionByDay
+        });
+    } catch (e) {
+        console.error('Insights detection-activity error:', e);
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// =====================================================================
+// D3 — Geo & Device Insights
+// GET /api/fraud/insights/geo-device?days=7
+// Drives the admin Geo & Device view (#view-geo). Surfaces recent
+// geo-tagged events, top risky cities, impossible-travel (R5) cases,
+// a 7×24 time-of-day heatmap, and devices shared across user accounts.
+// Window is clamped to one of [1, 7, 30] days (1 = 24h).
+// =====================================================================
+app.get('/api/fraud/insights/geo-device', async (req, res) => {
+    try {
+        // ---- Window validation: clamp to one of [1, 7, 30], default 7 ----
+        const allowedWindows = [1, 7, 30];
+        let days = parseInt(req.query.days, 10);
+        if (!allowedWindows.includes(days)) days = 7;
+
+        const cutoff = new Date(Date.now() - days * 86400e3);
+
+        // ---- Latest risk score per user (within the window) ----
+        // Aggregate FraudAlert: sort -createdAt then $group $first riskScore.
+        const latestRiskAgg = await FraudAlert.aggregate([
+            { $match: { createdAt: { $gte: cutoff } } },
+            { $sort: { createdAt: -1 } },
+            { $group: { _id: '$userId', latestRiskScore: { $first: '$riskScore' } } }
+        ]);
+        const latestRiskByUser = {};
+        latestRiskAgg.forEach(r => {
+            if (r._id) latestRiskByUser[String(r._id)] = Number(r.latestRiskScore) || 0;
+        });
+
+        // ---- recentGeoEvents (<= 500) ----
+        const rawEvents = await EventLog.find({
+            timestamp: { $gte: cutoff },
+            'location.lat': { $exists: true }
+        })
+            .sort({ timestamp: -1 })
+            .limit(500)
+            .populate('userId', 'username')
+            .lean();
+
+        const recentGeoEvents = rawEvents.map(ev => {
+            const uid = ev.userId && ev.userId._id ? String(ev.userId._id) : String(ev.userId || '');
+            const username = (ev.userId && ev.userId.username) ? ev.userId.username : '';
+            const loc = ev.location || {};
+            return {
+                userId: uid,
+                username,
+                eventType: ev.eventType,
+                lat: loc.lat,
+                lon: loc.lon,
+                city: loc.city || '',
+                country: loc.country || '',
+                timestamp: ev.timestamp,
+                latestRiskScore: latestRiskByUser[uid] || 0
+            };
+        });
+
+        // ---- topRiskyCities (top 15) ----
+        // Aggregate events grouped by {city, country}; events count.
+        // avgRisk = mean of latestRiskScore across the distinct users whose
+        // events landed in that city this window (pragmatic — does not weight
+        // by event volume per user, but stays cheap and intuitive).
+        const cityAgg = await EventLog.aggregate([
+            {
+                $match: {
+                    timestamp: { $gte: cutoff },
+                    'location.city': { $exists: true, $ne: null, $ne: '' }
+                }
+            },
+            {
+                $group: {
+                    _id: { city: '$location.city', country: '$location.country' },
+                    events: { $sum: 1 },
+                    users: { $addToSet: '$userId' }
+                }
+            },
+            { $sort: { events: -1 } },
+            { $limit: 15 }
+        ]);
+
+        const topRiskyCities = cityAgg.map(c => {
+            const users = Array.isArray(c.users) ? c.users : [];
+            let sum = 0, n = 0;
+            users.forEach(u => {
+                const r = latestRiskByUser[String(u)];
+                if (typeof r === 'number') { sum += r; n += 1; }
+            });
+            return {
+                city: c._id.city,
+                country: c._id.country || '',
+                events: c.events,
+                avgRisk: n > 0 ? +(sum / n).toFixed(2) : 0
+            };
+        });
+
+        // ---- impossibleTravel (R5) ----
+        const r5Alerts = await FraudAlert.find({
+            createdAt: { $gte: cutoff },
+            'decisionTrace.rules': { $elemMatch: { id: 'R5', fired: true } }
+        })
+            .sort({ createdAt: -1 })
+            .limit(50)
+            .populate('userId', 'username')
+            .lean();
+
+        // Pre-fetch geo events per user (for fast 2-event lookup pre-alert).
+        const r5UserIds = [...new Set(r5Alerts.map(a => String(a.userId && a.userId._id ? a.userId._id : a.userId)))];
+        const userGeoEvents = {};
+        if (r5UserIds.length > 0) {
+            const geos = await EventLog.find({
+                userId: { $in: r5UserIds },
+                'location.lat': { $exists: true }
+            })
+                .sort({ timestamp: -1 })
+                .limit(r5UserIds.length * 20)
+                .lean();
+            geos.forEach(g => {
+                const uid = String(g.userId);
+                if (!userGeoEvents[uid]) userGeoEvents[uid] = [];
+                userGeoEvents[uid].push(g);
+            });
+        }
+
+        // Fallback city pool for synthetic-only seeds (used only when the
+        // two pre-alert events can't be resolved).
+        const FALLBACK_CITY_POOL = [
+            { city: 'Bengaluru', country: 'IN', lat: 12.9716, lon: 77.5946 },
+            { city: 'Mumbai',    country: 'IN', lat: 19.0760, lon: 72.8777 },
+            { city: 'Delhi',     country: 'IN', lat: 28.6139, lon: 77.2090 },
+            { city: 'Dubai',     country: 'AE', lat: 25.2048, lon: 55.2708 },
+            { city: 'Singapore', country: 'SG', lat: 1.3521,  lon: 103.8198 },
+            { city: 'London',    country: 'GB', lat: 51.5074, lon: -0.1278 },
+            { city: 'New York',  country: 'US', lat: 40.7128, lon: -74.0060 }
+        ];
+
+        const impossibleTravel = r5Alerts.map(alert => {
+            const uid = String(alert.userId && alert.userId._id ? alert.userId._id : alert.userId);
+            const username = (alert.userId && alert.userId.username) ? alert.userId.username : '';
+            const alertAt = alert.createdAt;
+
+            // Look up the two most-recent geo events BEFORE the alert.
+            const userEvents = (userGeoEvents[uid] || [])
+                .filter(g => g.location && typeof g.location.lat === 'number' && typeof g.location.lon === 'number')
+                .filter(g => new Date(g.timestamp) <= new Date(alertAt))
+                .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+
+            let fromEv, toEv;
+            if (userEvents.length >= 2) {
+                toEv = userEvents[0];       // newer (more recent before the alert)
+                fromEv = userEvents[1];     // older
+            } else {
+                // Fallback: random two cities so the UI always has data.
+                const a = FALLBACK_CITY_POOL[Math.floor(Math.random() * FALLBACK_CITY_POOL.length)];
+                let b = FALLBACK_CITY_POOL[Math.floor(Math.random() * FALLBACK_CITY_POOL.length)];
+                if (b.city === a.city) b = FALLBACK_CITY_POOL[(FALLBACK_CITY_POOL.indexOf(a) + 1) % FALLBACK_CITY_POOL.length];
+                fromEv = { location: a, timestamp: new Date(new Date(alertAt).getTime() - 3600e3) };
+                toEv   = { location: b, timestamp: alertAt };
+            }
+
+            return {
+                alertId: String(alert._id),
+                userId: uid,
+                username,
+                speedKmh: Number(alert.traceR5SpeedKmh) || 0,
+                distanceKm: Number(alert.traceR5DistanceKm) || 0,
+                fromCity: (fromEv.location && fromEv.location.city) || '',
+                toCity:   (toEv.location   && toEv.location.city)   || '',
+                fromLat: fromEv.location.lat,
+                fromLon: fromEv.location.lon,
+                toLat:   toEv.location.lat,
+                toLon:   toEv.location.lon,
+                fromAt:  fromEv.timestamp,
+                toAt:    toEv.timestamp
+            };
+        });
+
+        // ---- todHeatmap (7×24 = 168 entries) ----
+        // $dayOfWeek returns 1..7 (Sun=1). Convert to 0..6 (Sun=0) downstream.
+        const [eventTodAgg, alertTodAgg] = await Promise.all([
+            EventLog.aggregate([
+                { $match: { timestamp: { $gte: cutoff } } },
+                {
+                    $group: {
+                        _id: {
+                            dow:  { $dayOfWeek: '$timestamp' },
+                            hour: { $hour: '$timestamp' }
+                        },
+                        events: { $sum: 1 }
+                    }
+                }
+            ]),
+            FraudAlert.aggregate([
+                { $match: { createdAt: { $gte: cutoff } } },
+                {
+                    $group: {
+                        _id: {
+                            dow:  { $dayOfWeek: '$createdAt' },
+                            hour: { $hour: '$createdAt' }
+                        },
+                        alerts: { $sum: 1 }
+                    }
+                }
+            ])
+        ]);
+
+        const evMap = {};
+        eventTodAgg.forEach(r => {
+            const dow = ((r._id.dow || 1) - 1) % 7;
+            const hour = r._id.hour || 0;
+            evMap[`${dow}-${hour}`] = r.events;
+        });
+        const alMap = {};
+        alertTodAgg.forEach(r => {
+            const dow = ((r._id.dow || 1) - 1) % 7;
+            const hour = r._id.hour || 0;
+            alMap[`${dow}-${hour}`] = r.alerts;
+        });
+        const todHeatmap = [];
+        for (let dow = 0; dow < 7; dow++) {
+            for (let hour = 0; hour < 24; hour++) {
+                const key = `${dow}-${hour}`;
+                todHeatmap.push({
+                    dow,
+                    hour,
+                    events: evMap[key] || 0,
+                    alerts: alMap[key] || 0
+                });
+            }
+        }
+
+        // ---- sharedDevices ----
+        const sharedAgg = await User.aggregate([
+            { $match: { deviceFingerprint: { $ne: null, $ne: '' } } },
+            {
+                $group: {
+                    _id: '$deviceFingerprint',
+                    users: { $push: { _id: '$_id', username: '$username', email: '$email', isBlocked: '$isBlocked' } },
+                    userCount: { $sum: 1 }
+                }
+            },
+            { $match: { userCount: { $gte: 2 }, _id: { $ne: null } } },
+            { $sort: { userCount: -1 } },
+            { $limit: 20 }
+        ]);
+
+        const sharedDevices = sharedAgg.map(d => {
+            const fp = d._id || '';
+            const fpShort = fp.length > 12 ? `${fp.slice(0, 12)}…` : fp;
+            const anyBlocked = (d.users || []).some(u => !!u.isBlocked);
+            return {
+                deviceFingerprint: fp,
+                fingerprintShort: fpShort,
+                userCount: d.userCount,
+                users: d.users || [],
+                anyBlocked
+            };
+        });
+
+        res.json({
+            windowDays: days,
+            recentGeoEvents,
+            topRiskyCities,
+            impossibleTravel,
+            todHeatmap,
+            sharedDevices
+        });
+    } catch (e) {
+        console.error('Insights geo-device error:', e);
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// =====================================================================
+// D4 — Fraud Ring Graph
+// GET /api/fraud/insights/graph?minRisk=0&days=all
+// Drives the admin Fraud Ring view (#view-ring). Returns a user-user
+// relationship graph: nodes = users (with latest risk + isBlocked),
+// edges = pairs of users sharing a phoneNumber, address, or
+// deviceFingerprint. Includes per-node clusterSize via union-find and
+// aggregate stats (componentCount, largestComponent).
+//
+// Rings are typically a function of static user attributes, so we do
+// not date-filter the graph itself; `?days` is accepted for API
+// symmetry with D2/D3 but currently ignored. `minRisk` is applied
+// client- and server-side (filtering nodes below threshold and any
+// edge that loses an endpoint).
+//
+// Caps: 1000 nodes (ranked by latestRiskScore desc), 2000 edges
+// (ranked by sum of endpoint risk desc). Cheap on 1k+ users.
+// =====================================================================
+app.get('/api/fraud/insights/graph', async (req, res) => {
+    try {
+        const minRisk = Math.max(0, Math.min(10, parseInt(req.query.minRisk, 10) || 0));
+        // `days` is accepted but currently ignored — rings are static-attribute based.
+        // const allowedWindows = ['all', '7', '30', '90'];
+        // const days = allowedWindows.includes(req.query.days) ? req.query.days : 'all';
+
+        // ---- Latest risk score per user (all time) ----
+        const latestRiskAgg = await FraudAlert.aggregate([
+            { $sort: { createdAt: -1 } },
+            { $group: { _id: '$userId', latestRiskScore: { $first: '$riskScore' } } }
+        ]);
+        const latestRiskByUser = {};
+        latestRiskAgg.forEach(r => {
+            if (r._id) latestRiskByUser[String(r._id)] = Number(r.latestRiskScore) || 0;
+        });
+
+        // ---- Pull candidate users ----
+        // Include every synthetic user (so seeded rings show up) plus any
+        // non-synthetic user that has at least one FraudAlert (riskScore > 0).
+        // Cap at 1000 by riskScore desc.
+        const riskyUserIds = Object.keys(latestRiskByUser).filter(uid => latestRiskByUser[uid] > 0);
+        const userFilter = {
+            $or: [
+                { synthetic: true },
+                { _id: { $in: riskyUserIds } }
+            ]
+        };
+        const rawUsers = await User.find(userFilter)
+            .select('username email phoneNumber address deviceFingerprint isBlocked synthetic')
+            .lean();
+
+        // Sort by risk desc then cap to 1000.
+        rawUsers.sort((a, b) => (latestRiskByUser[String(b._id)] || 0) - (latestRiskByUser[String(a._id)] || 0));
+        const cappedUsers = rawUsers.slice(0, 1000);
+
+        // Build node lookup keyed by id string.
+        const nodeMap = {};
+        cappedUsers.forEach(u => {
+            const id = String(u._id);
+            nodeMap[id] = {
+                id,
+                username: u.username || '',
+                email: u.email || '',
+                riskScore: latestRiskByUser[id] || 0,
+                isBlocked: !!u.isBlocked,
+                clusterSize: 1, // populated by union-find later
+                _phone: u.phoneNumber || null,
+                _address: u.address || null,
+                _device: u.deviceFingerprint || null
+            };
+        });
+
+        // ---- Compute edges by bucket-then-pair (O(N) buckets, O(K^2) per bucket) ----
+        const buckets = { phone: {}, address: {}, device: {} };
+        Object.values(nodeMap).forEach(n => {
+            if (n._phone)   { (buckets.phone[n._phone]   = buckets.phone[n._phone]   || []).push(n.id); }
+            if (n._address) { (buckets.address[n._address] = buckets.address[n._address] || []).push(n.id); }
+            if (n._device)  { (buckets.device[n._device]  = buckets.device[n._device]  || []).push(n.id); }
+        });
+
+        const edgeKey = (a, b, via) => {
+            const [x, y] = a < b ? [a, b] : [b, a];
+            return `${x}|${y}|${via}`;
+        };
+        const edgesSeen = new Set();
+        let allEdges = [];
+
+        const emitEdgesForBucket = (bucketObj, sharedVia) => {
+            Object.values(bucketObj).forEach(ids => {
+                if (!ids || ids.length < 2) return;
+                // Cap pairwise blow-up at large buckets (e.g. shared null/'' shouldn't
+                // happen because we filtered, but still guard).
+                if (ids.length > 50) return;
+                for (let i = 0; i < ids.length; i++) {
+                    for (let j = i + 1; j < ids.length; j++) {
+                        const a = ids[i], b = ids[j];
+                        if (a === b) continue;
+                        const k = edgeKey(a, b, sharedVia);
+                        if (edgesSeen.has(k)) continue;
+                        edgesSeen.add(k);
+                        allEdges.push({ source: a, target: b, sharedVia });
+                    }
+                }
+            });
+        };
+        emitEdgesForBucket(buckets.phone, 'phone');
+        emitEdgesForBucket(buckets.address, 'address');
+        emitEdgesForBucket(buckets.device, 'device');
+
+        // ---- Filter nodes by minRisk; drop edges whose endpoint was filtered ----
+        let nodes = Object.values(nodeMap).filter(n => n.riskScore >= minRisk);
+        const aliveSet = new Set(nodes.map(n => n.id));
+        let edges = allEdges.filter(e => aliveSet.has(e.source) && aliveSet.has(e.target));
+
+        // ---- Cap edges at 2000 (sum-of-endpoint-risk desc) ----
+        if (edges.length > 2000) {
+            const riskOf = (id) => (nodeMap[id] && nodeMap[id].riskScore) || 0;
+            edges.sort((a, b) => (riskOf(b.source) + riskOf(b.target)) - (riskOf(a.source) + riskOf(a.target)));
+            edges = edges.slice(0, 2000);
+        }
+
+        // ---- Union-find over (filtered) edges to compute cluster sizes ----
+        const parent = {};
+        const rank = {};
+        const findRoot = (x) => {
+            while (parent[x] !== x) { parent[x] = parent[parent[x]]; x = parent[x]; }
+            return x;
+        };
+        const union = (x, y) => {
+            const rx = findRoot(x), ry = findRoot(y);
+            if (rx === ry) return;
+            if (rank[rx] < rank[ry]) parent[rx] = ry;
+            else if (rank[rx] > rank[ry]) parent[ry] = rx;
+            else { parent[ry] = rx; rank[rx] += 1; }
+        };
+        nodes.forEach(n => { parent[n.id] = n.id; rank[n.id] = 0; });
+        edges.forEach(e => union(e.source, e.target));
+
+        // Count cluster sizes.
+        const compSize = {};
+        nodes.forEach(n => {
+            const r = findRoot(n.id);
+            compSize[r] = (compSize[r] || 0) + 1;
+        });
+        nodes.forEach(n => { n.clusterSize = compSize[findRoot(n.id)] || 1; });
+
+        // ---- Stats ----
+        // Only count components with >= 2 nodes for componentCount/largestComponent —
+        // singleton nodes aren't really "rings".
+        const sizes = Object.values(compSize).filter(s => s >= 2);
+        const componentCount = sizes.length;
+        const largestComponent = sizes.length > 0 ? Math.max(...sizes) : 0;
+
+        // Strip private underscore fields before returning.
+        const publicNodes = nodes.map(n => ({
+            id: n.id,
+            username: n.username,
+            email: n.email,
+            riskScore: n.riskScore,
+            isBlocked: n.isBlocked,
+            clusterSize: n.clusterSize
+        }));
+
+        res.json({
+            nodes: publicNodes,
+            edges,
+            stats: {
+                totalNodes: publicNodes.length,
+                totalEdges: edges.length,
+                componentCount,
+                largestComponent
+            }
+        });
+    } catch (e) {
+        console.error('Insights graph error:', e);
+        res.status(500).json({ error: e.message });
+    }
+});
+
 app.listen(PORT, () => {
     console.log(`🛡️  Fraud Detection Service running on http://localhost:${PORT}`);
 });

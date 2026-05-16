@@ -31,6 +31,11 @@ const eventLogSchema = new mongoose.Schema({
     timestamp: {
         type: Date,
         default: Date.now
+    },
+    synthetic: {
+        type: Boolean,
+        default: false,
+        index: true
     }
 }, {
     timestamps: true

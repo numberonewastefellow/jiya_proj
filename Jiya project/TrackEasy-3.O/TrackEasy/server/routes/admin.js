@@ -129,6 +129,83 @@ router.get('/blocked-detail/:userId', authMiddleware, async (req, res) => {
 });
 
 // ===============================
+// D1 — Fraud Overview Insights proxy
+// Drives the admin Dashboard (#view-dashboard).
+// ===============================
+router.get('/insights/overview', authMiddleware, async (req, res) => {
+    if (req.userRole !== 'admin') return res.status(403).json({ message: 'Access denied' });
+    try {
+        const fraudUrl = process.env.FRAUD_SERVICE_URL || 'http://localhost:5002';
+        const response = await fetch(`${fraudUrl}/api/fraud/insights/overview`);
+        const data = await response.json();
+        res.status(response.status).json(data);
+    } catch (err) {
+        console.error('Insights overview proxy error:', err);
+        res.status(500).json({ message: 'Insights overview proxy failed', error: err.message });
+    }
+});
+
+// ===============================
+// D2 — Detection Activity Insights proxy
+// Drives the admin Detection Activity view (#view-detection).
+// Forwards ?days=7|30|90 to the fraud-service.
+// ===============================
+router.get('/insights/detection-activity', authMiddleware, async (req, res) => {
+    if (req.userRole !== 'admin') return res.status(403).json({ message: 'Access denied' });
+    try {
+        const fraudUrl = process.env.FRAUD_SERVICE_URL || 'http://localhost:5002';
+        const days = req.query.days ? `?days=${encodeURIComponent(req.query.days)}` : '';
+        const response = await fetch(`${fraudUrl}/api/fraud/insights/detection-activity${days}`);
+        const data = await response.json();
+        res.status(response.status).json(data);
+    } catch (err) {
+        console.error('Insights detection-activity proxy error:', err);
+        res.status(500).json({ message: 'Insights detection-activity proxy failed', error: err.message });
+    }
+});
+
+// ===============================
+// D3 — Geo & Device Insights proxy
+// Drives the admin Geo & Device view (#view-geo).
+// Forwards ?days=1|7|30 to the fraud-service.
+// ===============================
+router.get('/insights/geo-device', authMiddleware, async (req, res) => {
+    if (req.userRole !== 'admin') return res.status(403).json({ message: 'Access denied' });
+    try {
+        const fraudUrl = process.env.FRAUD_SERVICE_URL || 'http://localhost:5002';
+        const days = req.query.days ? `?days=${encodeURIComponent(req.query.days)}` : '';
+        const response = await fetch(`${fraudUrl}/api/fraud/insights/geo-device${days}`);
+        const data = await response.json();
+        res.status(response.status).json(data);
+    } catch (err) {
+        console.error('Insights geo-device proxy error:', err);
+        res.status(500).json({ message: 'Insights geo-device proxy failed', error: err.message });
+    }
+});
+
+// ===============================
+// D4 — Fraud Ring Graph proxy
+// Drives the admin Fraud Ring view (#view-ring).
+// Forwards ?minRisk=0..10 and (optional) ?days=all|7|30|90 to the fraud-service.
+// ===============================
+router.get('/insights/graph', authMiddleware, async (req, res) => {
+    if (req.userRole !== 'admin') return res.status(403).json({ message: 'Access denied' });
+    try {
+        const fraudUrl = process.env.FRAUD_SERVICE_URL || 'http://localhost:5002';
+        const qs = [];
+        if (req.query.minRisk !== undefined) qs.push(`minRisk=${encodeURIComponent(req.query.minRisk)}`);
+        if (req.query.days !== undefined)    qs.push(`days=${encodeURIComponent(req.query.days)}`);
+        const query = qs.length > 0 ? `?${qs.join('&')}` : '';
+        const response = await fetch(`${fraudUrl}/api/fraud/insights/graph${query}`);
+        const data = await response.json();
+        res.status(response.status).json(data);
+    } catch (err) {
+        console.error('Insights graph proxy error:', err);
+        res.status(500).json({ message: 'Insights graph proxy failed', error: err.message });
+    }
+});
+
+// ===============================
 // USER MANAGEMENT ENDPOINTS
 // ===============================
 const User = require('../models/User');
@@ -401,6 +478,99 @@ router.post('/seed/reset', authMiddleware, async (req, res) => {
     } catch (err) {
         console.error('Seed reset endpoint error:', err);
         res.status(500).json({ message: 'Seed reset failed', error: err.message });
+    }
+});
+
+// ---------------------------------------------------------------------------
+// Synthetic seed data (for dashboards D1-D4)
+//   POST   /admin/seed/synthetic                — generate with custom opts
+//   POST   /admin/seed/synthetic/preset/:name   — generate with light/medium/heavy
+//   DELETE /admin/seed/synthetic                — wipe all { synthetic: true } rows
+// All four affected models carry synthetic:true so this cannot remove CSV data.
+// ---------------------------------------------------------------------------
+const { generate: generateSynthetic, PRESETS: SYNTHETIC_PRESETS } = require('../scripts/seedSynthetic');
+const EventLog = require('../models/EventLog');
+
+function validateSyntheticOpts(opts) {
+    const errs = [];
+    if (typeof opts !== 'object' || !opts) {
+        errs.push('Body must be an object');
+        return errs;
+    }
+    const reqd = ['userCount', 'alertCount', 'eventCount', 'daysBack', 'ringCount', 'ringSize', 'actionMix'];
+    for (const k of reqd) {
+        if (opts[k] === undefined || opts[k] === null) errs.push(`Missing field: ${k}`);
+    }
+    if (errs.length) return errs;
+    if (typeof opts.alertCount !== 'number' || opts.alertCount <= 0) errs.push('alertCount must be > 0');
+    if (opts.alertCount > 10000) errs.push('alertCount must be <= 10000');
+    if (typeof opts.daysBack !== 'number' || opts.daysBack <= 0) errs.push('daysBack must be > 0');
+    if (opts.daysBack > 365) errs.push('daysBack must be <= 365');
+    if (typeof opts.userCount !== 'number' || opts.userCount <= 0) errs.push('userCount must be > 0');
+    if (typeof opts.eventCount !== 'number' || opts.eventCount < 0) errs.push('eventCount must be >= 0');
+    if (typeof opts.ringCount !== 'number' || opts.ringCount < 0) errs.push('ringCount must be >= 0');
+    if (!Array.isArray(opts.ringSize) || opts.ringSize.some(n => typeof n !== 'number' || n < 1)) {
+        errs.push('ringSize must be array of positive integers');
+    }
+    const am = opts.actionMix;
+    if (!am || typeof am !== 'object') {
+        errs.push('actionMix must be an object');
+    } else {
+        const sum = (am.allow || 0) + (am.warning || 0) + (am.requires_otp || 0) + (am.block || 0);
+        if (Math.abs(sum - 1.0) > 0.01) errs.push(`actionMix must sum to 1.0 (±0.01), got ${sum.toFixed(3)}`);
+    }
+    return errs;
+}
+
+router.post('/seed/synthetic', authMiddleware, async (req, res) => {
+    if (req.userRole !== 'admin') return res.status(403).json({ message: 'Access denied' });
+    try {
+        const opts = req.body || {};
+        const errs = validateSyntheticOpts(opts);
+        if (errs.length) return res.status(400).json({ message: 'Invalid seed options', errors: errs });
+        const result = await generateSynthetic(opts);
+        res.json({ message: 'Synthetic seed generated', ...result });
+    } catch (err) {
+        console.error('Synthetic seed error:', err);
+        res.status(500).json({ message: 'Synthetic seed failed', error: err.message });
+    }
+});
+
+router.post('/seed/synthetic/preset/:name', authMiddleware, async (req, res) => {
+    if (req.userRole !== 'admin') return res.status(403).json({ message: 'Access denied' });
+    try {
+        const name = String(req.params.name || '').toLowerCase();
+        const preset = SYNTHETIC_PRESETS[name];
+        if (!preset) return res.status(404).json({ message: `Unknown preset: ${name}` });
+        const result = await generateSynthetic(preset);
+        res.json({ message: `Synthetic seed (${name}) generated`, preset: name, ...result });
+    } catch (err) {
+        console.error('Synthetic preset seed error:', err);
+        res.status(500).json({ message: 'Synthetic seed (preset) failed', error: err.message });
+    }
+});
+
+router.delete('/seed/synthetic', authMiddleware, async (req, res) => {
+    if (req.userRole !== 'admin') return res.status(403).json({ message: 'Access denied' });
+    try {
+        const [u, a, e, o] = await Promise.all([
+            User.deleteMany({ synthetic: true }),
+            FraudAlert.deleteMany({ synthetic: true }),
+            EventLog.deleteMany({ synthetic: true }),
+            Order.deleteMany({ synthetic: true }),
+        ]);
+        res.json({
+            message: 'Synthetic data cleared',
+            deleted: {
+                users: u.deletedCount || 0,
+                alerts: a.deletedCount || 0,
+                events: e.deletedCount || 0,
+                orders: o.deletedCount || 0,
+            }
+        });
+    } catch (err) {
+        console.error('Synthetic seed delete error:', err);
+        res.status(500).json({ message: 'Synthetic seed delete failed', error: err.message });
     }
 });
 

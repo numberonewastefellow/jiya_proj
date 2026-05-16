@@ -30,6 +30,17 @@ const fraudAlertSchema = new mongoose.Schema({
     },
     action: {
         type: String // 'allow' | 'warning' | 'requires_otp' | 'block'
+    },
+    traceR5SpeedKmh: {
+        type: Number
+    },
+    traceR5DistanceKm: {
+        type: Number
+    },
+    synthetic: {
+        type: Boolean,
+        default: false,
+        index: true
     }
 }, {
     timestamps: true
